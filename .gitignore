@@ -1,0 +1,13 @@
+.gradle/
+build/
+.tooling/
+.research/
+.idea/
+*.iml
+*.log
+local.properties
+credentials.properties
+credentials.json
+.env
+.env.*
+!.env.example
