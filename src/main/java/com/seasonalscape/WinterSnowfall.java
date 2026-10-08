@@ -24,8 +24,12 @@ final class WinterSnowfall
 {
     private static final Map<Object, State> STATES = new WeakHashMap<>();
     private static final int PARTICLE_COUNT = 384;
+    private static final int LOWER_PARTICLES = 256;
     private static final int RADIUS = 10 * 128;
     private static final int MODEL_ID = 27835;
+    private static final float LOWER_CEILING = 1500;
+    private static final float UPPER_FLOOR = 1100;
+    private static final float MIN_CEILING = 3200, MAX_CEILING = 6400;
 
     private WinterSnowfall() {}
 
@@ -63,6 +67,7 @@ final class WinterSnowfall
         }
         state.center = point;
         state.refreshTiles();
+        state.refreshCeiling();
         // A failed outdoor placement remains inactive until the next game tick.
         for (Flake flake : state.flakes)
         {
@@ -92,7 +97,7 @@ final class WinterSnowfall
         ModelData source = client.loadModelData(MODEL_ID);
         if (source == null || source.getVerticesCount() < 3 || source.getVerticesCount() > 8192
             || source.getFaceCount() == 0 || source.getFaceCount() > 8192) { return null; }
-        Model[] models = new Model[3];
+        Model[] models = new Model[6];
         for (int variant = 0; variant < models.length; variant++)
         {
             ModelData data = source.shallowCopy().cloneVertices().cloneColors();
@@ -102,14 +107,24 @@ final class WinterSnowfall
                 Arrays.fill(data.getFaceTextures(), (short) -1);
             }
             data.cloneTransparencies(true);
-            Arrays.fill(data.getFaceTransparencies(), (byte) (24 + variant * 8));
+            Arrays.fill(data.getFaceTransparencies(), (byte) (24 + variant % 3 * 8));
             Arrays.fill(data.getFaceColors(), (short) 120);
-            reshape(source, data, 4.4f + variant * 0.8f);
+            // Upper flakes are slightly larger so the raised layer remains
+            // legible at far zoom without adding more animated objects.
+            reshape(source, data, (variant < 3 ? 4.4f : 7.0f) + variant % 3 * 0.8f);
             data.translate(0, 0, 0);
             models[variant] = data.light(100, ModelData.DEFAULT_CONTRAST,
                 ModelData.DEFAULT_X, ModelData.DEFAULT_Y, ModelData.DEFAULT_Z);
         }
         return models;
+    }
+
+    static float ceilingForCamera(float groundHeight, double cameraZ)
+    {
+        if (!Float.isFinite(groundHeight) || !Double.isFinite(cameraZ)) { return MIN_CEILING; }
+        // Scene Z becomes more negative above the ground. Follow camera height,
+        // with headroom for the upper view, while keeping the volume bounded.
+        return (float) Math.max(MIN_CEILING, Math.min(MAX_CEILING, groundHeight - cameraZ + 1024));
     }
 
     /** Retain one cache flake; collapse other components without modifying face indices. */
@@ -170,6 +185,8 @@ final class WinterSnowfall
         byte[][][] flags;
         int[][] heights;
         LocalPoint center;
+        float ceiling = MIN_CEILING;
+        int lastVolumeCycle = Integer.MIN_VALUE;
         boolean cleared;
 
         State(Client client, WorldView world, Scene scene, Model[] models)
@@ -183,7 +200,7 @@ final class WinterSnowfall
             refreshTiles();
             for (int i = 0; i < PARTICLE_COUNT; i++)
             {
-                flakes.add(new Flake(this, models[i % models.length]));
+                flakes.add(new Flake(this, models[i % 3 + (i >= LOWER_PARTICLES ? 3 : 0)], i));
             }
         }
 
@@ -195,6 +212,19 @@ final class WinterSnowfall
             flags = world.getTileSettings();
             int[][][] allHeights = world.getTileHeights();
             heights = allHeights == null || allHeights.length == 0 ? null : allHeights[0];
+        }
+
+        void refreshCeiling()
+        {
+            int cycle = client.getGameCycle();
+            if (cycle == lastVolumeCycle || center == null) { return; }
+            double cameraZ = client.isGpu() ? client.getCameraFpZ() : client.getCameraZ();
+            float target = ceilingForCamera(GroundCoverPlacement.height(heights, center.getX(), center.getY()), cameraZ);
+            // Follow zoom changes within about a second, without stretching the
+            // whole upper layer abruptly on one frame. Compute once per cycle.
+            ceiling = lastVolumeCycle == Integer.MIN_VALUE ? target
+                : ceiling + Math.max(-80, Math.min(80, target - ceiling));
+            lastVolumeCycle = cycle;
         }
 
         boolean outdoors(int localX, int localY)
@@ -230,12 +260,18 @@ final class WinterSnowfall
         final State state;
         final float speed;
         final float phase;
+        final boolean upperLayer;
+        final int layerIndex, layerCount;
         float x, y, altitude, age;
+        float altitudeCeiling;
 
-        Flake(State state, Model model)
+        Flake(State state, Model model, int index)
         {
             super(state.client);
             this.state = state;
+            upperLayer = index >= LOWER_PARTICLES;
+            layerIndex = upperLayer ? index - LOWER_PARTICLES : index;
+            layerCount = upperLayer ? PARTICLE_COUNT - LOWER_PARTICLES : LOWER_PARTICLES;
             speed = 1.5f + state.random.nextFloat() * 1.2f;
             phase = state.random.nextFloat() * 6.2831853f;
             setModel(model);
@@ -254,9 +290,14 @@ final class WinterSnowfall
                 x = state.center.getX() + (float) (Math.cos(angle) * radius);
                 y = state.center.getY() + (float) (Math.sin(angle) * radius);
                 if (!state.outdoors((int) x, (int) y)) { continue; }
-                // Fill the taller column immediately, then recycle above the canopy.
-                altitude = spreadVertically ? 30 + state.random.nextFloat() * 1470
-                    : 1100 + state.random.nextFloat() * 400;
+                // Keep two thirds of the flakes in the original dense lower
+                // volume, with a separate upper layer for distant camera views.
+                // Stratified initial heights populate both layers immediately.
+                float floor = upperLayer ? UPPER_FLOOR : 30;
+                altitudeCeiling = upperLayer ? state.ceiling : LOWER_CEILING;
+                float fraction = spreadVertically ? (layerIndex + state.random.nextFloat()) / layerCount
+                    : 0.75f + state.random.nextFloat() * 0.25f;
+                altitude = floor + fraction * (altitudeCeiling - floor);
                 place();
                 if (!isActive()) { setActive(true); }
                 return true;
@@ -282,13 +323,23 @@ final class WinterSnowfall
                 return;
             }
             state.center = point;
+            state.refreshCeiling();
+            if (upperLayer && altitudeCeiling != state.ceiling)
+            {
+                // Preserve each flake's position within its layer as the camera
+                // zoom changes; no respawn, extra object or model rebuild needed.
+                altitude = UPPER_FLOOR + (altitude - UPPER_FLOOR)
+                    * (state.ceiling - UPPER_FLOOR) / (altitudeCeiling - UPPER_FLOOR);
+                altitudeCeiling = state.ceiling;
+            }
             int elapsed = Math.max(0, Math.min(10, ticksSinceLastFrame));
             age += elapsed;
             altitude -= speed * elapsed;
             x += (0.5f + (float) Math.sin(age * 0.035f + phase) * 0.55f) * elapsed;
             y += (float) Math.cos(age * 0.024f + phase) * 0.45f * elapsed;
             float dx = x - point.getX(), dy = y - point.getY();
-            if (altitude <= 6 || dx * dx + dy * dy > (RADIUS + 128f) * (RADIUS + 128f)
+            if (altitude <= (upperLayer ? UPPER_FLOOR : 6)
+                || dx * dx + dy * dy > (RADIUS + 128f) * (RADIUS + 128f)
                 || !state.outdoors((int) x, (int) y))
             {
                 respawn(false);

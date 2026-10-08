@@ -31,7 +31,7 @@ public interface SeasonalScapeConfig extends Config
     default boolean foliage() { return true; }
 
     @ConfigItem(keyName = "groundCover", name = "Ground cover", position = 5,
-        description = "Spring blossoms, summer wildflowers or autumn leaf piles on nearby suitable grass. Winter uses continuous snow coverage.")
+        description = "Spring blossoms, summer wildflowers or autumn leaf piles spread across suitable grass in the loaded landscape. Winter uses continuous snow coverage.")
     default boolean groundCover() { return true; }
 
     @Range(min = 0, max = 100)

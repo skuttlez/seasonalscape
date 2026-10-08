@@ -1,12 +1,22 @@
 package com.seasonalscape;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.BiFunction;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.Model;
 import net.runelite.api.ModelData;
 import net.runelite.api.Player;
+import net.runelite.api.RuneLiteObject;
 import net.runelite.api.Scene;
+import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
 import org.junit.Test;
@@ -18,6 +28,111 @@ import static org.junit.Assert.assertTrue;
 
 public class WinterSnowfallTest
 {
+    @Test
+    public void cameraCeilingTracksHeightAboveTerrainAndRejectsInvalidInput()
+    {
+        float near = WinterSnowfall.ceilingForCamera(0, -1000);
+        float far = WinterSnowfall.ceilingForCamera(0, -4500);
+        assertTrue("Zooming out raises the visible snow column", far > near + 1500);
+        assertEquals("Equivalent height above elevated terrain gives the same column", far,
+            WinterSnowfall.ceilingForCamera(-800, -5300), 0);
+        assertEquals("Invalid projection uses the normal taller volume", near,
+            WinterSnowfall.ceilingForCamera(0, Double.NaN), 0);
+        assertEquals(near, WinterSnowfall.ceilingForCamera(Float.NaN, -4500), 0);
+        assertTrue("Extreme zoom cannot create an unbounded sparse column",
+            WinterSnowfall.ceilingForCamera(0, -1_000_000) < far * 2);
+    }
+
+    @Test
+    public void tallerSnowKeepsDenseLowerLayerAndRespondsToZoomWithoutAddingParticles() throws Exception
+    {
+        SnowFixture f = new SnowFixture();
+        try
+        {
+            assertEquals("The expanded volume keeps the exact particle budget", 384, WinterSnowfall.getCount(f.owner));
+            Set<Object> registered = Collections.newSetFromMap(new IdentityHashMap<>());
+            registered.addAll(f.registered);
+            int low = 0, high = 0, aboveOldCeiling = 0;
+            float lowerMax = 0, upperMax = 0;
+            float[] originalHeights = new float[f.flakes.size()];
+            for (int i = 0; i < f.flakes.size(); i++)
+            {
+                RuneLiteObject flake = f.flakes.get(i);
+                float altitude = f.altitude.getFloat(flake);
+                originalHeights[i] = altitude;
+                if (f.upperLayer.getBoolean(flake)) { high++; upperMax = Math.max(upperMax, altitude); }
+                else { low++; lowerMax = Math.max(lowerMax, altitude); }
+                if (altitude > 1500) { aboveOldCeiling++; }
+                assertTrue("The horizontal footprint does not grow with the column",
+                    Math.hypot(flake.getX() - f.point.getX(), flake.getY() - f.point.getY()) <= 1282);
+                assertEquals("Negative scene Z places flakes above the sloping-world height",
+                    -160 - altitude, flake.getZ(), 1);
+            }
+            assertEquals("Two thirds of the budget remain near the ground", 256, low);
+            assertEquals("A dedicated upper layer fills the taller view immediately", 128, high);
+            assertTrue("Stratification fills the top of the original lower column", lowerMax > 1450);
+            assertTrue("The upper column is populated on its first frame", upperMax > 3100);
+            assertTrue("Higher coverage is substantial instead of one stray high flake", aboveOldCeiling >= 100);
+
+            f.cameraZ = -4800;
+            int readsBefore = f.cameraReads;
+            for (int step = 0; step < 40; step++) { f.tickAll(0); }
+            assertEquals("Camera projection is read once per client cycle, not for every flake",
+                40, f.cameraReads - readsBefore);
+            int above4000 = 0;
+            for (int i = 0; i < f.flakes.size(); i++)
+            {
+                RuneLiteObject flake = f.flakes.get(i);
+                float altitude = f.altitude.getFloat(flake);
+                if (f.upperLayer.getBoolean(flake))
+                {
+                    assertTrue("Existing upper flakes move into the new volume without waiting for respawn",
+                        altitude > originalHeights[i]);
+                    if (altitude > 4000) { above4000++; }
+                }
+                else { assertEquals("Zooming does not dilute or stretch lower snowfall", originalHeights[i], altitude, 0); }
+            }
+            assertTrue("Fully zoomed out views keep many flakes well above the old ceiling", above4000 >= 40);
+            assertEquals("Zoom changes reuse the same active particle objects", registered, f.registered);
+
+            f.cameraZ = -1800;
+            for (int step = 0; step < 40; step++) { f.tickAll(0); }
+            for (int i = 0; i < f.flakes.size(); i++)
+            {
+                assertEquals("Zooming back in contracts the layer without replacing its flakes",
+                    originalHeights[i], f.altitude.getFloat(f.flakes.get(i)), 0.02);
+            }
+        }
+        finally { WinterSnowfall.clear(f.owner); }
+        assertTrue("Clearing removes both altitude layers", f.registered.isEmpty());
+    }
+
+    @Test
+    public void eachAltitudeLayerRecyclesAtItsOwnTopAndStillHonorsShelter() throws Exception
+    {
+        SnowFixture f = new SnowFixture();
+        try
+        {
+            RuneLiteObject lower = f.flakes.get(0), upper = f.flakes.get(f.flakes.size() - 1);
+            f.altitude.setFloat(lower, 0);
+            f.altitude.setFloat(upper, 0);
+            f.tickAll(1);
+            assertTrue("Lower flakes recycle above the canopy", f.altitude.getFloat(lower) > 1100);
+            assertTrue("The lower layer stays dense within its original height", f.altitude.getFloat(lower) <= 1500);
+            assertTrue("Upper flakes recycle in the raised part of the column", f.altitude.getFloat(upper) > 2600);
+            assertTrue(lower.isActive());
+            assertTrue(upper.isActive());
+
+            for (byte[] row : f.flags[2]) { java.util.Arrays.fill(row, (byte) 4); }
+            f.tickAll(1);
+            assertEquals("Raising the ceiling never makes snow spawn beneath roofs", 0, WinterSnowfall.getCount(f.owner));
+            for (byte[] row : f.flags[2]) { java.util.Arrays.fill(row, (byte) 0); }
+            WinterSnowfall.update(f.owner, f.client, f.scene);
+            assertEquals("Returning outdoors repopulates both layers", 384, WinterSnowfall.getCount(f.owner));
+        }
+        finally { WinterSnowfall.clear(f.owner); }
+    }
+
     @Test
     public void expandedSurfaceAdmitsSnowfallWhileUndergroundAndInstancesDoNotLoadParticles()
     {
@@ -132,11 +247,86 @@ public class WinterSnowfallTest
             });
     }
 
+    private static final class SnowFixture
+    {
+        final Object owner = new Object();
+        final LocalPoint point = new LocalPoint(16 * 128 + 64, 16 * 128 + 64, WorldView.TOPLEVEL);
+        final byte[][][] flags = new byte[4][32][32];
+        final Set<Object> registered = Collections.newSetFromMap(new IdentityHashMap<>());
+        final Client client;
+        final Scene scene;
+        final List<RuneLiteObject> flakes;
+        final Field altitude, upperLayer;
+        int cycle = 1, cameraZ = -1800, cameraReads;
+
+        @SuppressWarnings("unchecked")
+        SnowFixture() throws Exception
+        {
+            Tile[][][] tiles = new Tile[1][32][32];
+            Tile outdoor = proxy(Tile.class, (name, args) -> null);
+            for (Tile[] row : tiles[0]) { java.util.Arrays.fill(row, outdoor); }
+            int[][][] heights = new int[1][33][33];
+            for (int[] row : heights[0]) { java.util.Arrays.fill(row, -160); }
+            scene = proxy(Scene.class, (name, args) -> {
+                if (name.equals("getBaseX") || name.equals("getBaseY")) { return 3200; }
+                if (name.equals("getTiles")) { return tiles; }
+                return null;
+            });
+            WorldView world = proxy(WorldView.class, (name, args) -> {
+                switch (name)
+                {
+                    case "getId": return WorldView.TOPLEVEL;
+                    case "isTopLevel": return true;
+                    case "getScene": return scene;
+                    case "getTileSettings": return flags;
+                    case "getTileHeights": return heights;
+                    default: return null;
+                }
+            });
+            Player player = proxy(Player.class, (name, args) -> name.equals("getLocalLocation") ? point : null);
+            client = proxy(Client.class, (name, args) -> {
+                switch (name)
+                {
+                    case "getTopLevelWorldView": return world;
+                    case "getLocalPlayer": return player;
+                    case "getGameState": return GameState.LOGGED_IN;
+                    case "getGameCycle": return cycle;
+                    case "getCameraZ": cameraReads++; return cameraZ;
+                    case "registerRuneLiteObject": registered.add(args[0]); return null;
+                    case "removeRuneLiteObject": registered.remove(args[0]); return null;
+                    case "isRuneLiteObjectRegistered": return registered.contains(args[0]);
+                    default: return null;
+                }
+            });
+            Class<?> stateType = Class.forName("com.seasonalscape.WinterSnowfall$State");
+            Constructor<?> constructor = stateType.getDeclaredConstructor(Client.class, WorldView.class, Scene.class, Model[].class);
+            constructor.setAccessible(true);
+            Object state = constructor.newInstance(client, world, scene, new Model[6]);
+            Field flakesField = stateType.getDeclaredField("flakes");
+            flakesField.setAccessible(true);
+            flakes = (List<RuneLiteObject>) flakesField.get(state);
+            altitude = flakes.get(0).getClass().getDeclaredField("altitude");
+            altitude.setAccessible(true);
+            upperLayer = flakes.get(0).getClass().getDeclaredField("upperLayer");
+            upperLayer.setAccessible(true);
+            Field states = WinterSnowfall.class.getDeclaredField("STATES");
+            states.setAccessible(true);
+            ((Map<Object, Object>) states.get(null)).put(owner, state);
+            WinterSnowfall.update(owner, client, scene);
+        }
+
+        void tickAll(int elapsed)
+        {
+            cycle++;
+            for (RuneLiteObject flake : flakes) { flake.tick(elapsed); }
+        }
+    }
+
     private static <T> T proxy(Class<T> type, BiFunction<String, Object[], Object> handler)
     {
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (object, method, args) -> {
             Object result = handler.apply(method.getName(), args);
-            if (result != null || !method.getReturnType().isPrimitive()) { return result; }
+            if (result != null || !method.getReturnType().isPrimitive() || method.getReturnType() == void.class) { return result; }
             if (method.getReturnType() == boolean.class) { return false; }
             if (method.getReturnType() == int.class) { return 0; }
             throw new AssertionError("Unexpected primitive method: " + method);

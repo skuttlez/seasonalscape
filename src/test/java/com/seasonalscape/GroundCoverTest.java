@@ -26,6 +26,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
@@ -100,17 +101,19 @@ public class GroundCoverTest
         int[][] flags = new int[104][104];
         int[][][] heights = new int[1][105][105];
         boolean[] instance = {false};
+        int[] sceneBase = {3200, 3200};
         Scene scene = (Scene) Proxy.newProxyInstance(Scene.class.getClassLoader(),
             new Class<?>[]{Scene.class}, (proxy, method, args) -> {
                 switch (method.getName())
                 {
                     case "getTiles": return tiles;
-                    case "getBaseX": return 3200;
-                    case "getBaseY": return 3200;
+                    case "getBaseX": return sceneBase[0];
+                    case "getBaseY": return sceneBase[1];
                     case "isInstance": return instance[0];
                     default: throw new UnsupportedOperationException(method.getName());
                 }
             });
+        Scene[] activeScene = {scene};
         CollisionData collision = (CollisionData) Proxy.newProxyInstance(CollisionData.class.getClassLoader(),
             new Class<?>[]{CollisionData.class}, (proxy, method, args) -> {
                 if (method.getName().equals("getFlags")) { return flags; }
@@ -124,7 +127,7 @@ public class GroundCoverTest
                     case "getPlane": return 0;
                     case "isTopLevel": return true;
                     case "isInstance": return instance[0];
-                    case "getScene": return scene;
+                    case "getScene": return activeScene[0];
                     case "getCollisionMaps": return new CollisionData[]{collision};
                     case "getTileHeights": return heights;
                     default: throw new UnsupportedOperationException(method.getName());
@@ -219,6 +222,7 @@ public class GroundCoverTest
         cover.update(scene, recolorer, Season.SUMMER, true, 100);
         assertEquals("Unsupported or non-grass tiles remain protected", 0, cover.getCount());
         ground.add(tile);
+        cover.invalidate();
         cover.update(scene, recolorer, Season.SUMMER, true, 100);
         assertEquals(1, cover.getCount());
         instance[0] = true;
@@ -229,7 +233,7 @@ public class GroundCoverTest
         cover.update(scene, recolorer, Season.SUMMER, true, 0);
         assertEquals("Zero density removes flowers", 0, cover.getCount());
 
-        // A full loaded scene must retain the exact same world-anchored piles
+        // A full loaded scene must retain the exact same world-anchored decorations
         // when the player walks across it, without re-lighting their geometry.
         for (int x = 1; x < 103; x++)
         {
@@ -239,50 +243,109 @@ public class GroundCoverTest
                 ground.add(tiles[0][x][y]);
             }
         }
-        cover.update(scene, recolorer, Season.AUTUMN, true, 30);
-        assertEquals("Autumn is bounded by the existing global object cap", 200, cover.getCount());
         Field objectsField = GroundCover.class.getDeclaredField("objects");
         objectsField.setAccessible(true);
         Map<Long, RuneLiteObject> objects = (Map<Long, RuneLiteObject>) objectsField.get(cover);
-        Map<Long, RuneLiteObject> beforeWalk = new HashMap<>(objects);
-        Set<String> sectors = new HashSet<>();
-        boolean farFromPlayer = false;
-        for (long key : objects.keySet())
-        {
-            int worldX = (int) (key >> 32), worldY = (int) key;
-            sectors.add(worldX / 8 + ":" + worldY / 8);
-            farFromPlayer |= worldX > 3290 && worldY > 3290;
-        }
-        assertTrue("Autumn reaches the far side of the scene beyond the old ten-tile circle", farFromPlayer);
-        assertEquals("Every eligible world sector receives a pile before any gets more", 169, sectors.size());
-        Field selectionField = GroundCover.class.getDeclaredField("autumnCandidates");
+        Field selectionField = GroundCover.class.getDeclaredField("cachedCandidates");
         selectionField.setAccessible(true);
-        Object selection = selectionField.get(cover);
-        int copiesBeforeWalk = source.copies.size();
-        playerPoint[0] = new LocalPoint(100 * 128 + 64, 100 * 128 + 64, -1);
-        cover.update(scene, recolorer, Season.AUTUMN, true, 30);
-        assertEquals("Walking retains every pile object and its world position", beforeWalk, objects);
-        assertTrue("Walking reuses the cached scene selection", selection == selectionField.get(cover));
-        assertEquals("Walking creates no new pile geometry", copiesBeforeWalk, source.copies.size());
+        Map<Long, RuneLiteObject> previousSeason = new HashMap<>();
+        Object previousSelection = null;
+        for (Season season : new Season[]{Season.SPRING, Season.SUMMER, Season.AUTUMN})
+        {
+            playerPoint[0] = point;
+            cover.update(scene, recolorer, season, true, 30);
+            int defaultCount = season == Season.AUTUMN ? 200 : 120;
+            assertEquals("Default density keeps the existing object budget in " + season,
+                defaultCount, cover.getCount());
+            for (long key : objects.keySet())
+            {
+                assertTrue("Season changes replace old decoration geometry",
+                    objects.get(key) != previousSeason.get(key));
+            }
+            Object selection = selectionField.get(cover);
+            assertTrue("Season changes discard the previous placement cache", selection != previousSelection);
+            Map<Long, RuneLiteObject> beforeWalk = new HashMap<>(objects);
+            Set<String> sectors = new HashSet<>();
+            Set<Integer> quadrants = new HashSet<>();
+            boolean farFromPlayer = false;
+            for (long key : objects.keySet())
+            {
+                int worldX = (int) (key >> 32), worldY = (int) key;
+                sectors.add(worldX / 8 + ":" + worldY / 8);
+                quadrants.add((worldX >= 3252 ? 1 : 0) + (worldY >= 3252 ? 2 : 0));
+                farFromPlayer |= worldX > 3264 || worldY > 3264;
+            }
+            assertTrue("Flowers and leaves reach far beyond the old ten-tile circle in " + season, farFromPlayer);
+            assertEquals("Decorations spread to all four quarters of the loaded landscape", 4, quadrants.size());
+            assertEquals("Occupied sectors receive one decoration before any gets more",
+                Math.min(defaultCount, 169), sectors.size());
+            int copiesBeforeWalk = source.copies.size();
+            playerPoint[0] = new LocalPoint(100 * 128 + 64, 100 * 128 + 64, -1);
+            cover.update(scene, recolorer, season, true, 30);
+            assertEquals("Walking retains every decoration and its world position", beforeWalk, objects);
+            assertTrue("Walking reuses the cached scene selection", selection == selectionField.get(cover));
+            assertEquals("Walking creates no new decoration geometry", copiesBeforeWalk, source.copies.size());
+
+            cover.update(scene, recolorer, season, true, 5);
+            assertEquals("Reducing density updates the cached selection and object count",
+                season == Season.AUTUMN ? 40 : 20, cover.getCount());
+            assertTrue(selection != selectionField.get(cover));
+            cover.update(scene, recolorer, season, true, 100);
+            assertEquals("Every season keeps the hard object ceiling at high density", 200, cover.getCount());
+            previousSeason = new HashMap<>(objects);
+            previousSelection = selectionField.get(cover);
+        }
 
         ground.clear();
         ground.add(tiles[0][2][2]);
         ground.add(tiles[0][54][54]);
         ground.add(tiles[0][99][99]);
-        cover.invalidate();
-        cover.update(scene, recolorer, Season.AUTUMN, true, 100);
-        assertEquals("Disconnected eligible patches throughout the scene all receive piles", 3, cover.getCount());
-        flags[99][99] = 1;
-        cover.update(scene, recolorer, Season.AUTUMN, true, 100);
-        assertEquals("Cached autumn placements are removed when collision changes", 2, cover.getCount());
-        flags[99][99] = 0;
-        cover.invalidate();
-        cover.update(scene, recolorer, Season.AUTUMN, true, 100);
-        assertEquals("Object refresh makes newly eligible ground available again", 3, cover.getCount());
-        for (Season season : new Season[]{Season.SPRING, Season.SUMMER})
+        for (Season season : new Season[]{Season.SPRING, Season.SUMMER, Season.AUTUMN})
         {
+            cover.invalidate();
             cover.update(scene, recolorer, season, true, 100);
-            assertEquals("Flower seasons retain their nearby range", 1, cover.getCount());
+            assertEquals("Disconnected eligible patches throughout the scene receive " + season + " decorations",
+                3, cover.getCount());
+            flags[99][99] = 1;
+            cover.update(scene, recolorer, season, true, 100);
+            assertEquals("Cached placements are removed when collision changes", 2, cover.getCount());
+            flags[99][99] = 0;
+            cover.invalidate();
+            cover.update(scene, recolorer, season, true, 100);
+            assertEquals("Object refresh makes newly eligible ground available again", 3, cover.getCount());
+            ground.clear();
+            cover.update(scene, recolorer, season, true, 100);
+            assertEquals("Losing ground eligibility removes every cached object", 0, cover.getCount());
+            ground.add(tiles[0][2][2]);
+            ground.add(tiles[0][54][54]);
+            ground.add(tiles[0][99][99]);
+            cover.invalidate();
+            cover.update(scene, recolorer, season, true, 100);
+            assertEquals("An explicit refresh repopulates an empty placement cache", 3, cover.getCount());
+        }
+
+        Map<Long, RuneLiteObject> oldPositions = new HashMap<>(objects);
+        Object oldSelection = selectionField.get(cover);
+        sceneBase[0] += 64;
+        cover.update(scene, recolorer, Season.AUTUMN, true, 100);
+        assertEquals(3, cover.getCount());
+        assertTrue("A changed scene base cannot reuse cached world coordinates",
+            oldSelection != selectionField.get(cover));
+        for (long oldKey : oldPositions.keySet())
+        {
+            assertFalse("Objects from the previous scene base are removed", objects.containsKey(oldKey));
+        }
+        oldPositions = new HashMap<>(objects);
+        oldSelection = selectionField.get(cover);
+        activeScene[0] = (Scene) Proxy.newProxyInstance(Scene.class.getClassLoader(),
+            new Class<?>[]{Scene.class}, Proxy.getInvocationHandler(scene));
+        cover.update(activeScene[0], recolorer, Season.AUTUMN, true, 100);
+        assertEquals(3, cover.getCount());
+        assertTrue("A replacement scene always refreshes the placement cache",
+            oldSelection != selectionField.get(cover));
+        for (long key : objects.keySet())
+        {
+            assertTrue("A replacement scene unregisters the previous objects", oldPositions.get(key) != objects.get(key));
         }
     }
 

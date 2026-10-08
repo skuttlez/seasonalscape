@@ -33,8 +33,7 @@ public final class GroundCover
     // An existing low-polygon snow-particle mesh in the game cache. The mesh is
     // cloned before its vertices, colors, textures or transparency are changed.
     private static final int FLAKE_MODEL_ID = 27835;
-    private static final int RADIUS_TILES = 10;
-    private static final int AUTUMN_SECTOR_TILES = 8;
+    private static final int SECTOR_TILES = 8;
     private static final int MAX_OBJECTS = 200;
     private static final int VARIANT_COUNT = 4;
     private static final int MAX_FLAKES = 16;
@@ -47,8 +46,9 @@ public final class GroundCover
     private int baseY;
     private Season modelSeason;
     private Model[] models;
-    private List<Candidate> autumnCandidates;
-    private int autumnDensity = -1;
+    private List<Candidate> cachedCandidates;
+    private int cachedDensity = -1;
+    private Season cachedSeason;
 
     public GroundCover(Client client)
     {
@@ -75,13 +75,15 @@ public final class GroundCover
     /** Recheck outdoor eligibility after a scene/configuration/object refresh. */
     public void invalidate()
     {
-        autumnCandidates = null;
-        autumnDensity = -1;
+        cachedCandidates = null;
+        cachedDensity = -1;
+        cachedSeason = null;
     }
 
     /**
-     * Autumn covers the loaded outdoor scene with at most 200 evenly distributed
-     * piles. Spring/summer retain their nearby circle and normal limit of 120.
+     * Every nonwinter season covers the loaded outdoor scene with evenly spread
+     * decorations. Default density places up to 120 flowers or 200 leaf piles;
+     * all seasons retain a hard limit of 200 objects.
      * Density continues to select the same percentage of eligible world tiles.
      */
     public void update(Scene scene, SeasonalSceneRecolorer recolorer, Season season,
@@ -136,31 +138,23 @@ public final class GroundCover
 
         int[][] collisionFlags = collisionMaps[0].getFlags();
         int chance = Math.min(100, density);
-        boolean acrossScene = season == Season.AUTUMN;
-        int limit = Math.min(MAX_OBJECTS, chance * (acrossScene ? 8 : 4));
+        int limit = Math.min(MAX_OBJECTS, chance * (season == Season.AUTUMN ? 8 : 4));
         List<Candidate> candidates;
-        if (acrossScene && autumnCandidates != null && autumnDensity == chance
-            && candidatesStillEligible(autumnCandidates, tiles, collisionFlags, heights[0], recolorer))
+        if (cachedCandidates != null && cachedDensity == chance && cachedSeason == season
+            && candidatesStillEligible(cachedCandidates, tiles, collisionFlags, heights[0], recolorer))
         {
-            candidates = autumnCandidates;
+            candidates = cachedCandidates;
         }
         else
         {
-            candidates = candidates(tiles, collisionFlags, heights[0], recolorer,
-                playerPoint, chance, acrossScene);
-            if (acrossScene)
-            {
-                candidates = distributeAcrossSectors(candidates, limit);
-                autumnCandidates = candidates;
-                autumnDensity = chance;
-            }
-            else
-            {
-                candidates.sort(Comparator.comparingLong(candidate -> candidate.seed));
-            }
+            candidates = distributeAcrossSectors(
+                candidates(tiles, collisionFlags, heights[0], recolorer, chance), limit);
+            cachedCandidates = candidates;
+            cachedDensity = chance;
+            cachedSeason = season;
         }
 
-        // Autumn's desired positions are independent of both player and camera;
+        // Desired positions are independent of both player and camera;
         // walking through a stable scene retains the same registered objects.
         Set<Long> desired = new HashSet<>();
         for (int i = 0; i < Math.min(limit, candidates.size()); i++)
@@ -207,30 +201,17 @@ public final class GroundCover
     }
 
     private List<Candidate> candidates(Tile[][][] tiles, int[][] collisionFlags,
-        int[][] heights, SeasonalSceneRecolorer recolorer, LocalPoint playerPoint,
-        int chance, boolean acrossScene)
+        int[][] heights, SeasonalSceneRecolorer recolorer, int chance)
     {
         List<Candidate> candidates = new ArrayList<>();
-        int playerX = playerPoint.getSceneX();
-        int playerY = playerPoint.getSceneY();
-        int minX = acrossScene ? 1 : Math.max(1, playerX - RADIUS_TILES);
-        int maxX = acrossScene ? tiles[0].length - 2 : Math.min(tiles[0].length - 2, playerX + RADIUS_TILES);
-        for (int x = minX; x <= maxX; x++)
+        for (int x = 1; x < tiles[0].length - 1; x++)
         {
             if (tiles[0][x] == null)
             {
                 continue;
             }
-            int minY = acrossScene ? 1 : Math.max(1, playerY - RADIUS_TILES);
-            int maxY = acrossScene ? tiles[0][x].length - 2 : Math.min(tiles[0][x].length - 2, playerY + RADIUS_TILES);
-            for (int y = minY; y <= maxY; y++)
+            for (int y = 1; y < tiles[0][x].length - 1; y++)
             {
-                int dx = x - playerX;
-                int dy = y - playerY;
-                if (!acrossScene && dx * dx + dy * dy > RADIUS_TILES * RADIUS_TILES)
-                {
-                    continue;
-                }
                 long key = worldKey(baseX + x, baseY + y);
                 long seed = mix(key);
                 Tile tile = tiles[0][x][y];
@@ -261,7 +242,7 @@ public final class GroundCover
         return true;
     }
 
-    /** Give every occupied world sector a pile before filling any sector again. */
+    /** Give every occupied world sector a decoration before filling any sector again. */
     private static List<Candidate> distributeAcrossSectors(List<Candidate> candidates, int limit)
     {
         Map<Long, List<Candidate>> sectors = new HashMap<>();
@@ -269,8 +250,8 @@ public final class GroundCover
         {
             int worldX = (int) (candidate.key >> 32);
             int worldY = (int) candidate.key;
-            long sector = worldKey(Math.floorDiv(worldX, AUTUMN_SECTOR_TILES),
-                Math.floorDiv(worldY, AUTUMN_SECTOR_TILES));
+            long sector = worldKey(Math.floorDiv(worldX, SECTOR_TILES),
+                Math.floorDiv(worldY, SECTOR_TILES));
             sectors.computeIfAbsent(sector, unused -> new ArrayList<>()).add(candidate);
         }
         List<Long> order = new ArrayList<>(sectors.keySet());

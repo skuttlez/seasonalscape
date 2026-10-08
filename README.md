@@ -2,16 +2,16 @@
 
 A RuneLite development plugin that follows the real-world calendar or a manually selected season. It changes eligible **3D ground and tree colors**, and adds small decorative ground-cover models. It targets RuneLite's default graphics and built-in GPU plugin.
 
-**Status: development release; not yet published on the Plugin Hub.** Seasonal effects now cover eligible tiles and supported trees across the main overworld, including members' areas. Autumn leaves and foliage, winter terrain coverage, white winter tree textures, and falling snow have been visually checked in a logged-in GPU client near Varrock. Spring/summer additions have automated geometry and lifecycle coverage. Expanded members-area coverage has automated eligibility checks, but has not been visually verified with a members account; wider visual and performance testing remains.
+**Status: development release; not yet published on the Plugin Hub.** Seasonal effects now cover eligible tiles and supported trees across the main overworld, including members' areas. All four seasons have received short logged-in previews with the built-in GPU in free-to-play outdoor areas. Spring and summer each placed 120 flower patches across roughly 97 by 98 tiles of the loaded landscape; winter had 384 flakes across its lower and raised upper layers. The preview reported 60 FPS and restored the prior season afterward. Expanded members-area coverage has automated eligibility checks, but has not been visually verified with a members account; wider visual and performance testing remains.
 
-Build verification: compiled against RuneLite 1.13.1, including a separate production-source compile with the official Plugin Hub standard build template. All 98 automated tests pass. They cover calendar boundaries, expanded-area eligibility, palette transformations, scene restoration and exclusions, shared color arrays, untextured cache models, slope-aware ground cover, camera-limited structure snow, and GPU foliage tint bounds. RuneLite's own CI and review have not yet run.
+Build verification: compiled against RuneLite 1.13.1, including a separate production-source compile with the official Plugin Hub standard build template. All 101 automated tests pass. They cover calendar boundaries, expanded-area eligibility, stable flower/leaf placement across the loaded scene, palette transformations, scene restoration and exclusions, shared color arrays, untextured cache models, slope-aware ground cover, camera-limited structure snow, snowfall zoom response, and GPU foliage tint bounds. RuneLite's own CI and review have not yet run.
 
 ## Seasons
 
 | Season | World changes |
 | --- | --- |
-| Spring | Fresh green grass and foliage, low pastel/white blossom clusters, sparse drifting pink and white petals |
-| Summer | Warm green grass, deeper mature foliage, yellow/white wildflower patches, a few low-flying butterflies with fluttering wings |
+| Spring | Fresh green grass and foliage, low pastel/white blossom clusters spread across the loaded outdoor map, sparse drifting pink and white petals |
+| Summer | Warm green grass, deeper mature foliage, yellow/white wildflower patches spread across the loaded outdoor map, a few low-flying butterflies with fluttering wings |
 | Autumn / fall | Muted golden ground, orange/red/gold foliage, compact piles of up to 64 overlapping leaves, spread across the loaded outdoor map |
 | Winter | Continuous snow across eligible grass and grass blades, soft white tree foliage, drifting snowfall, optional snow on exposed roofs and nearby structural tops, and optional winter ambience |
 
@@ -30,6 +30,8 @@ Coverage remains conservative: world X and Y must both be in 0–4095. Undergrou
 Tree names supported initially: Tree, Oak / Oak tree, Willow / Willow tree, Yew / Yew tree and Maple tree. Green untextured faces are recolored in all seasonal modes. Spring, summer and autumn also tint three verified leaf textures through GPU's **Bright textures** option, retaining leaf transparency; the development launcher enables this option. Winter changes those leaf textures to shaded off-white with a trace of green, preserving the leafy outline and brown trunks. Winter has no added canopy caps or white-dot decorations. Texture whitening requires the built-in GPU renderer and affects other foliage sharing those three textures while active. Animated trees, every tree variant, bare winter branches and snow depth are not implemented. Texture colors and decorative geometry derive from the local cache; no game assets are redistributed.
 
 **Snow on structures** is off by default to reduce rendering work. Enable it in SeasonalScape settings to add snow on roofs, buildings, walls and other exposed structures. Switching it off immediately restores those surfaces and skips their coating scans; ground snow, white foliage and falling snow remain independent.
+
+Falling snow uses 384 particles in two height layers. Most remain near the ground and canopy, while an upper layer raises the snow ceiling with camera height so snowfall remains visible when zoomed out. The ceiling adjusts smoothly within a bounded range; zooming repositions existing particles without adding objects or rebuilding their models. Upper flakes are slightly larger for visibility at a distance. Roof and bridge filtering still applies.
 
 When enabled, structure snow schedules nearby exposed surfaces inside a padded camera view, within roughly 22 tiles (24 for retaining existing coatings). This is camera-view filtering, not a ray-traced obstruction test: a surface behind another object may still be eligible. Roof materials retain native roof hiding. Work is spread over client ticks, static coatings are reused, and GPU zone uploads are limited per tick; small camera movements do not trigger a new sweep. Snow may fill in gradually as you approach or turn toward structures. Turning the option off still restores all coatings.
 
@@ -54,13 +56,14 @@ Requires JDK 17+ to run Gradle; plugin bytecode targets Java 11. The checked-in 
 .\gradlew.bat run
 ```
 
-The plugin JAR is `build/libs/seasonalscape-0.1.15.jar`. A standalone development client can be built with `shadowJar`. To test against a later RuneLite release, use `-PruneLiteVersion=latest.release` and repeat the live checks below.
+The plugin JAR is `build/libs/seasonalscape-0.1.17.jar`. A standalone development client can be built with `shadowJar`. To test against a later RuneLite release, use `-PruneLiteVersion=latest.release` and repeat the live checks below.
 
 ## Live acceptance checks
 
 - On default graphics, check autumn trees/grass/leaves, winter snowy ground, spring and summer.
 - Repeat with the built-in GPU enabled; switching seasons should update the loaded scene.
 - Rotate/zoom the camera: ground cover should sit on the terrain and be occluded by world geometry.
+- Zoom fully out in winter: snowfall should extend into the higher view, while retaining flakes near the ground. Recheck entering a roofed area and switching out of winter.
 - Cross region boundaries while running: seasonal materials should remain active during loading, with new geometry recolored before GPU uploads.
 - Check roof hiding and indoor furniture, then switch seasons to confirm surface coatings restore.
 - In spring and summer, check flower patches from several camera angles, petal drift and butterfly wings; enter a building, change seasons, set density to zero and toggle Petals and butterflies to verify cleanup.
@@ -73,6 +76,6 @@ The plugin JAR is `build/libs/seasonalscape-0.1.15.jar`. A standalone developmen
 
 ## Implementation
 
-Calendar selection is independent of graphics. Scene edits run on the client thread and preserve original color values. Shared model color arrays are tracked by identity. Restoration checks that values still match the plugin's last write, so it does not knowingly overwrite another plugin's edits. GPU zones are explicitly invalidated after edits. Decoration counts are bounded. Autumn distributes up to 200 equally full piles across world-anchored sectors of the loaded supported map, instead of a small player-centered circle. Walking within that map keeps their placement; scene/config/object changes refresh eligibility. Spring and summer ground cover keep their nearby ten-tile radius.
+Calendar selection is independent of graphics. Scene edits run on the client thread and preserve original color values. Shared model color arrays are tracked by identity. Restoration checks that values still match the plugin's last write, so it does not knowingly overwrite another plugin's edits. GPU zones are explicitly invalidated after edits. Decoration counts are bounded. Spring flowers, summer flowers and autumn leaves are distributed across world-anchored sectors of the loaded supported map. Walking within that map keeps their placement; scene/config/object changes refresh eligibility. Patch geometry and density controls are preserved: the default density allows up to 120 flower patches or 200 leaf piles, with a hard ceiling of 200 ground-cover objects. Petals and butterflies retain their nearby seven-tile range.
 
 Reference APIs: [RuneLite API](https://static.runelite.net/runelite-api/apidocs/), [GPU renderer](https://github.com/runelite/runelite/blob/master/runelite-client/src/main/java/net/runelite/client/plugins/gpu/GpuPlugin.java). The cache particle model ID was identified from [3D Weather](https://github.com/ScreteMonge/3D-Weather); the rendering logic here is independently written.
