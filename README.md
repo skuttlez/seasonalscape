@@ -4,7 +4,7 @@ A RuneLite development plugin that follows the real-world calendar or a manually
 
 **Status: development release; not yet published on the Plugin Hub.** Seasonal effects now cover eligible tiles and supported trees across the main overworld, including members' areas. All four seasons have received short logged-in previews with the built-in GPU in free-to-play outdoor areas. Spring and summer each placed 120 flower patches across roughly 97 by 98 tiles of the loaded landscape; winter had 384 flakes across its lower and raised upper layers. The preview reported 60 FPS and restored the prior season afterward. Expanded members-area coverage has automated eligibility checks, but has not been visually verified with a members account; wider visual and performance testing remains.
 
-Build verification: compiled against RuneLite 1.13.1, including a separate production-source compile with the official Plugin Hub standard build template. All 101 automated tests pass. They cover calendar boundaries, expanded-area eligibility, stable flower/leaf placement across the loaded scene, palette transformations, scene restoration and exclusions, shared color arrays, untextured cache models, slope-aware ground cover, camera-limited structure snow, snowfall zoom response, and GPU foliage tint bounds. RuneLite's own CI and review have not yet run.
+Build verification: compiled against RuneLite 1.13.1, including a separate production-source compile with the official Plugin Hub standard build template. Automated tests cover calendar boundaries, expanded-area eligibility, stable flower/leaf placement across the loaded scene, palette transformations, scene restoration and exclusions, shared color arrays, untextured cache models, slope-aware ground cover, camera-limited structure snow, snowfall zoom response, generated audio, and GPU foliage tint bounds. See [Plugin Hub submission #18106](https://github.com/runelite/plugin-hub/pull/18106) for RuneLite's current build and review status.
 
 ## Seasons
 
@@ -17,7 +17,7 @@ Build verification: compiled against RuneLite 1.13.1, including a separate produ
 
 Automatic mode uses the computer's date and time zone; it requires no location lookup, weather service, or paid hosting. Northern seasons begin March 1, June 1, September 1 and December 1. Select Southern Hemisphere to reverse them. A manual season always takes priority. An optional time-zone setting accepts names such as `America/Phoenix`.
 
-The existing **SeasonalScape plugin settings** contain **Winter audio** and **Winter audio volume**, below the season and visual controls. Audio starts off. When enabled, it generates occasional soft snow-settling accents and faint ice tones locally, with silence between events and no continuous wind. It plays only during winter while logged in, and fades out on season changes or logout. It does not change the game's sound settings or download audio assets.
+The existing **SeasonalScape plugin settings** contain **Winter audio** and **Winter audio volume**, below the season and visual controls. Audio starts off. When enabled, it generates occasional soft snow-settling accents and faint ice tones locally, with silence between events and no continuous wind. Playback uses RuneLite's audio player while winter is active and the player is logged in. Disabling it, muting it, changing seasons or logging out stops new sound; an already playing fragment finishes within 250 milliseconds. It does not change the game's sound settings or download audio assets.
 
 **Petals and butterflies** controls the spring/summer moving details independently of **Ground cover**. Both use **Ground cover density**; zero removes both. At the default density of 30, airborne effects are limited to 21 spring petals or seven summer butterflies within seven tiles, over eligible outdoor grass. They have no collision or interactions. Spring and summer ideas draw on the Woodland Trust's [spring woodland guide](https://www.woodlandtrust.org.uk/visiting-woods/things-to-do/woods-through-the-seasons/spring/) and [summer woodland guide](https://www.woodlandtrust.org.uk/visiting-woods/things-to-do/woods-through-the-seasons/summer/): blossoms, fresh growth, meadow flowers and butterflies.
 
@@ -56,7 +56,7 @@ Requires JDK 17+ to run Gradle; plugin bytecode targets Java 11. The checked-in 
 .\gradlew.bat run
 ```
 
-The plugin JAR is `build/libs/seasonalscape-0.1.17.jar`. A standalone development client can be built with `shadowJar`. To test against a later RuneLite release, use `-PruneLiteVersion=latest.release` and repeat the live checks below.
+The plugin JAR is `build/libs/seasonalscape-0.1.18.jar`. A standalone development client can be built with `shadowJar`. To test against a later RuneLite release, use `-PruneLiteVersion=latest.release` and repeat the live checks below.
 
 ## Live acceptance checks
 

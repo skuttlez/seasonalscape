@@ -13,6 +13,7 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.PostClientTick;
 import net.runelite.api.hooks.DrawCallbacks;
+import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -23,11 +24,12 @@ import net.runelite.client.plugins.gpu.GpuPlugin;
 import net.runelite.client.ui.overlay.OverlayManager;
 
 @PluginDescriptor(name = "SeasonalScape", description = "Seasonal outdoor terrain, trees and ground cover",
-    tags = {"season", "spring", "summer", "autumn", "winter", "snow", "leaves", "flowers"}, enabledByDefault = false)
+    tags = {"season", "spring", "summer", "autumn", "winter", "snow", "leaves", "flowers"})
 public class SeasonalScapePlugin extends Plugin
 {
     @Inject private Client client;
     @Inject private ClientThread clientThread;
+    @Inject private AudioPlayer audioPlayer;
     @Inject private SeasonalScapeConfig config;
     @Inject private OverlayManager overlayManager;
     @Inject private SeasonalStatusOverlay overlay;
@@ -55,7 +57,7 @@ public class SeasonalScapePlugin extends Plugin
         recolorer = new SeasonalSceneRecolorer(client);
         groundCover = new GroundCover(client);
         overlayManager.add(overlay);
-        SeasonalWinterAudio.start(this, client, getInjector().getInstance(ConfigManager.class));
+        SeasonalWinterAudio.start(this, client, getInjector().getInstance(ConfigManager.class), audioPlayer);
         SeasonalSceneSync.start(this, client, () -> {
             if (running) { dirty = true; update(); }
         });

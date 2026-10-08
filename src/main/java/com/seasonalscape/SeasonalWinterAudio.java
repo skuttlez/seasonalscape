@@ -1,15 +1,14 @@
 package com.seasonalscape;
 
+import java.io.ByteArrayInputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Map;
 import java.util.Random;
 import java.util.WeakHashMap;
-import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.DataLine;
-import javax.sound.sampled.LineUnavailableException;
-import javax.sound.sampled.SourceDataLine;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.config.ConfigManager;
 import org.slf4j.LoggerFactory;
 
@@ -21,13 +20,15 @@ final class SeasonalWinterAudio
     private static final String ENABLED = "winterAudio";
     private static final String VOLUME = "winterAudioVolume";
     private static final int SAMPLE_RATE = 22050;
+    private static final int CHUNK_FRAMES = SAMPLE_RATE / 4;
+    private static final long CHUNK_NANOS = CHUNK_FRAMES * 1_000_000_000L / SAMPLE_RATE;
 
     private SeasonalWinterAudio() {}
 
-    static synchronized void start(Object owner, Client client, ConfigManager configs)
+    static synchronized void start(Object owner, Client client, ConfigManager configs, AudioPlayer audioPlayer)
     {
         stop(owner);
-        State state = new State(client, configs);
+        State state = new State(client, configs, audioPlayer);
         STATES.put(owner, state);
         state.readSettings();
         state.worker.start();
@@ -50,7 +51,8 @@ final class SeasonalWinterAudio
         if (state == null) { return; }
         state.closed = true;
         state.signal();
-        // The worker fades and closes its own audio line; no join or device calls here.
+        // AudioPlayer owns playback and exposes no stop handle. Stop submitting
+        // new chunks; an already-started clip may finish its remaining <=250 ms.
     }
 
     static synchronized boolean isPlaying(Object owner)
@@ -65,19 +67,59 @@ final class SeasonalWinterAudio
         return state == null ? "Disabled" : state.status();
     }
 
-    private static final class State
+    /** Small in-memory PCM WAVs let RuneLite own all access to the audio device. */
+    static byte[] wave(byte[] pcm)
+    {
+        if ((pcm.length & 3) != 0) { throw new IllegalArgumentException("Stereo PCM requires complete frames"); }
+        return ByteBuffer.allocate(44 + pcm.length).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(0x46464952).putInt(36 + pcm.length).putInt(0x45564157)
+            .putInt(0x20746d66).putInt(16).putShort((short) 1).putShort((short) 2)
+            .putInt(SAMPLE_RATE).putInt(SAMPLE_RATE * 4).putShort((short) 4).putShort((short) 16)
+            .putInt(0x61746164).putInt(pcm.length).put(pcm).array();
+    }
+
+    static boolean hasSignal(byte[] pcm)
+    {
+        for (byte value : pcm) { if (value != 0) { return true; } }
+        return false;
+    }
+
+    /** A two-millisecond edge fade avoids clicks between separately owned clips. */
+    static void softenEdges(byte[] pcm)
+    {
+        int frames = pcm.length / 4;
+        int fade = Math.min(SAMPLE_RATE / 500, frames / 2);
+        for (int frame = 0; frame < fade; frame++)
+        {
+            double gain = frame / (double) fade;
+            for (int channel = 0; channel < 2; channel++)
+            {
+                for (int offset : new int[]{frame * 4 + channel * 2, (frames - frame - 1) * 4 + channel * 2})
+                {
+                    int sample = (short) ((pcm[offset] & 255) | (pcm[offset + 1] << 8));
+                    int scaled = (int) Math.round(sample * gain);
+                    pcm[offset] = (byte) scaled;
+                    pcm[offset + 1] = (byte) (scaled >> 8);
+                }
+            }
+        }
+    }
+
+    static final class State
     {
         final Client client;
         final ConfigManager configs;
+        final AudioPlayer audioPlayer;
         final Object wake = new Object();
         final Thread worker;
         volatile boolean enabled, inWorld, winter, closed, playing, failed;
         volatile int volume = 25;
 
-        State(Client client, ConfigManager configs)
+        State(Client client, ConfigManager configs, AudioPlayer audioPlayer)
         {
             this.client = client;
             this.configs = configs;
+            this.audioPlayer = audioPlayer;
             worker = new Thread(this::run, "SeasonalScape winter audio");
             worker.setDaemon(true);
         }
@@ -127,32 +169,37 @@ final class SeasonalWinterAudio
 
         void play()
         {
-            SourceDataLine line = null;
+            play(new SnowSound(0x534e4f5741554449L));
+        }
+
+        void play(SnowSound sound)
+        {
             try
             {
-                AudioFormat format = new AudioFormat(SAMPLE_RATE, 16, 2, true, false);
-                DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
-                line = (SourceDataLine) AudioSystem.getLine(info);
-                line.open(format, 8192);
                 if (!wanted()) { return; }
-                line.start();
                 playing = true;
-                SnowSound sound = new SnowSound(0x534e4f5741554449L);
-                byte[] buffer = new byte[512 * 4];
-                do
+                byte[] buffer = new byte[CHUNK_FRAMES * 4];
+                while (wanted())
                 {
-                    sound.render(buffer, wanted() ? volume / 100f * 0.8f : 0);
-                    int offset = 0;
-                    while (offset < buffer.length)
+                    sound.render(buffer, volume / 100f * 0.8f);
+                    if (!wanted()) { break; }
+                    if (hasSignal(buffer))
                     {
-                        int written = line.write(buffer, offset, buffer.length - offset);
-                        if (written <= 0) { throw new IllegalStateException("Audio output stopped"); }
-                        offset += written;
+                        softenEdges(buffer);
+                        try (ByteArrayInputStream input = new ByteArrayInputStream(wave(buffer)))
+                        {
+                            // AudioPlayer's gain is decibels. Volume is already
+                            // applied to PCM, so leave device gain at unity.
+                            audioPlayer.play(input, 0);
+                        }
                     }
+                    // AudioPlayer starts a finite clip asynchronously. Pace even
+                    // silent chunks, from completion of this submission, so a
+                    // slow device never triggers a burst of catch-up playback.
+                    if (!awaitChunk(System.nanoTime() + CHUNK_NANOS)) { break; }
                 }
-                while (wanted() || !sound.isSilent());
             }
-            catch (LineUnavailableException | IllegalArgumentException | IllegalStateException | SecurityException error)
+            catch (Exception error)
             {
                 failed = true;
                 LoggerFactory.getLogger(SeasonalWinterAudio.class)
@@ -161,12 +208,22 @@ final class SeasonalWinterAudio
             finally
             {
                 playing = false;
-                if (line != null)
+            }
+        }
+
+        boolean awaitChunk(long deadline)
+        {
+            synchronized (wake)
+            {
+                while (wanted())
                 {
-                    try { line.stop(); line.flush(); line.close(); }
-                    catch (RuntimeException ignored) { /* A disconnected device is already unusable. */ }
+                    long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) { return true; }
+                    try { wake.wait(remaining / 1_000_000L, (int) (remaining % 1_000_000L)); }
+                    catch (InterruptedException ignored) { /* Recheck lifecycle and monotonic deadline. */ }
                 }
             }
+            return false;
         }
     }
 
