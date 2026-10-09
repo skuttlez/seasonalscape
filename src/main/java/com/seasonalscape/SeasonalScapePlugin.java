@@ -89,11 +89,6 @@ public class SeasonalScapePlugin extends Plugin
     public void onGameTick(GameTick event)
     {
         update();
-        if (recolorer != null)
-        {
-            WinterFoliageTextures.update(recolorer, client,
-                running && activeSeason == Season.WINTER && config.foliage());
-        }
         if (running && activeSeason == Season.WINTER && recolorer != null)
         {
             WorldView world = client.getTopLevelWorldView();
@@ -213,9 +208,6 @@ public class SeasonalScapePlugin extends Plugin
             activeSeason = season;
             dirty = false;
         }
-        // Scene/config restoration and material reactivation belong to the
-        // same client-thread update, without an intervening original frame.
-        WinterFoliageTextures.update(recolorer, client, season == Season.WINTER && config.foliage());
         SeasonalWinterAudio.update(this, season, running);
         WinterSurfaceSnow.update(recolorer, client, scene,
             season == Season.WINTER && config.terrain() && config.winterStructureSnow());

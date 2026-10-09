@@ -27,7 +27,7 @@ public interface SeasonalScapeConfig extends Config
     default boolean terrain() { return true; }
 
     @ConfigItem(keyName = "foliage", name = "Seasonal trees", position = 4,
-        description = "Recolors green foliage on supported static trees. Tree trunks and interactions remain intact.")
+        description = "Recolors supported static trees. Textured leaves keep their original color in winter; other foliage turns snowy.")
     default boolean foliage() { return true; }
 
     @ConfigItem(keyName = "groundCover", name = "Ground cover", position = 5,

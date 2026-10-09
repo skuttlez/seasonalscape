@@ -48,6 +48,8 @@ public final class SeasonalSceneRecolorer
 
     public void apply(Scene scene, Season season, boolean terrain, boolean foliage)
     {
+        // Face tints preserve texture pixels and cutouts. Winter keeps textured
+        // leaves unchanged; whitening them requires a supported material API.
         boolean tintTextures = foliage && season != Season.WINTER && SeasonalTextureTint.supported(client);
         if (scene != activeScene.get() || season != previousSeason
             || terrain != previousTerrain || foliage != previousFoliage || tintTextures != previousTextureTint)
@@ -291,7 +293,6 @@ public final class SeasonalSceneRecolorer
     {
         WinterSnowfall.clear(this);
         WinterSurfaceSnow.restore(this);
-        WinterFoliageTextures.restore(this);
         WinterTreeFrost.restore(this);
         for (Map.Entry<SceneTilePaint, Colors> entry : paints.entrySet())
         {
