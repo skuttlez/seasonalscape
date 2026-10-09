@@ -12,20 +12,24 @@ import java.util.Random;
 import java.util.WeakHashMap;
 import net.runelite.api.Client;
 import net.runelite.api.GameObject;
+import net.runelite.api.GameState;
 import net.runelite.api.JagexColor;
 import net.runelite.api.Model;
 import net.runelite.api.ModelData;
 import net.runelite.api.Player;
 import net.runelite.api.RuneLiteObject;
+import net.runelite.api.Scene;
+import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
+import net.runelite.client.plugins.gpu.GpuPlugin;
 
 /** Small snow deposits that follow foliage surfaces without replacing their cutout texture. */
 final class WinterTreeFrost
 {
     private static final Map<Object, State> STATES = new WeakHashMap<>();
-    private static final int MAX_TREES = 64;
-    private static final int RADIUS = 24 * 128;
-    private static final int LAYERS = 3;
+    private static final int MAX_TREES = 24;
+    private static final int RADIUS = 24 * 128, RETAIN_RADIUS = 26 * 128;
+    private static final int MAX_CACHED_MODELS = 48;
 
     private WinterTreeFrost() {}
 
@@ -44,14 +48,30 @@ final class WinterTreeFrost
         short[] textures = model.getFaceTextures();
         if (textures == null) { return false; }
         boolean leaves = false;
-        for (short texture : textures) { leaves |= texture == 8 || texture == 30; }
+        for (short texture : textures) { leaves |= SeasonalTextureTint.isLeafTexture(texture); }
         if (!leaves) { return false; }
-        State state = STATES.computeIfAbsent(owner, ignored -> new State());
+        WorldView world = client.getTopLevelWorldView();
+        Scene scene = world == null ? null : world.getScene();
+        State state = STATES.get(owner);
+        if (state != null && (state.scene != scene || scene == null
+            || state.baseX != scene.getBaseX() || state.baseY != scene.getBaseY()))
+        {
+            restore(owner);
+            state = null;
+        }
+        if (state == null)
+        {
+            state = new State();
+            state.scene = scene;
+            state.baseX = scene == null ? 0 : scene.getBaseX();
+            state.baseY = scene == null ? 0 : scene.getBaseY();
+            STATES.put(owner, state);
+        }
         state.client = client;
         Entry entry = state.entries.get(tree);
         if (entry == null || entry.model != model)
         {
-            if (entry != null) { entry.clear(); }
+            if (entry != null) { entry.clear(); state.models.remove(entry); }
             entry = new Entry(tree, model);
             state.entries.put(tree, entry);
         }
@@ -67,7 +87,7 @@ final class WinterTreeFrost
         while (iterator.hasNext())
         {
             Entry entry = iterator.next();
-            if (!entry.seen) { entry.clear(); iterator.remove(); }
+            if (!entry.seen) { entry.clear(); state.models.remove(entry); iterator.remove(); }
         }
         refresh(owner, state.client);
     }
@@ -77,6 +97,7 @@ final class WinterTreeFrost
     {
         State state = STATES.get(owner);
         if (state == null || client == null) { return; }
+        if (!ready(state, client)) { restore(owner); return; }
         Player player = client.getLocalPlayer();
         LocalPoint point = player == null ? null : player.getLocalLocation();
         List<Entry> nearby = new ArrayList<>();
@@ -88,27 +109,94 @@ final class WinterTreeFrost
                 || entry.tree.getPlane() != player.getWorldLocation().getPlane()) { continue; }
             long dx = location.getX() - point.getX(), dy = location.getY() - point.getY();
             entry.distance = dx * dx + dy * dy;
-            if (entry.distance <= (long) RADIUS * RADIUS) { nearby.add(entry); }
+            int radius = entry.object == null ? RADIUS : RETAIN_RADIUS;
+            if (entry.distance <= (long) radius * radius) { nearby.add(entry); }
         }
         nearby.sort(Comparator.comparingLong(entry -> entry.distance));
-        for (int i = 0; i < Math.min(MAX_TREES, nearby.size()); i++) { nearby.get(i).wanted = true; }
+        state.selected.clear();
+        for (int i = 0; i < Math.min(MAX_TREES, nearby.size()); i++)
+        {
+            Entry entry = nearby.get(i);
+            entry.wanted = true;
+            state.selected.add(entry);
+        }
         for (Entry entry : state.entries.values())
         {
-            if (!entry.wanted) { entry.clear(); continue; }
-            if (entry.object == null)
-            {
-                Model snow = createModel(client, entry.model,
-                    ((long) entry.tree.getX() << 32) ^ entry.tree.getY() ^ entry.tree.getId());
-                if (snow == null) { continue; }
-                RuneLiteObject object = client.createRuneLiteObject();
-                object.setModel(snow);
-                object.setLocation(entry.tree.getLocalLocation(), entry.tree.getPlane());
-                object.setZ(entry.tree.getZ());
-                object.setOrientation(entry.tree.getModelOrientation());
-                object.setActive(true);
-                entry.object = object;
-            }
+            if (!entry.wanted) { entry.clear(); }
         }
+    }
+
+    /** At most one model build/object activation per client cycle, never on camera rotation. */
+    static void tick(Object owner)
+    {
+        State state = STATES.get(owner);
+        if (state == null) { return; }
+        Client client = state.client;
+        if (!ready(state, client)) { restore(owner); return; }
+        int cycle = client.getGameCycle();
+        if (state.lastCycle == cycle) { return; }
+        state.lastCycle = cycle;
+        state.lastBuilds = 0;
+        for (Entry entry : state.selected)
+        {
+            if (!entry.wanted || entry.object != null || cycle < entry.retryCycle) { continue; }
+            Model snow = state.models.get(entry);
+            if (snow == null)
+            {
+                state.lastBuilds = 1;
+                snow = createModel(client, entry.model,
+                    ((long) entry.tree.getX() << 32) ^ entry.tree.getY() ^ entry.tree.getId());
+                if (snow == null) { entry.retryCycle = cycle + 50; return; }
+                state.models.put(entry, snow);
+                if (state.models.size() > MAX_CACHED_MODELS)
+                {
+                    state.models.remove(state.models.keySet().iterator().next());
+                }
+            }
+            RuneLiteObject object = client.createRuneLiteObject();
+            object.setModel(snow);
+            object.setLocation(entry.tree.getLocalLocation(), entry.tree.getPlane());
+            object.setZ(entry.tree.getZ());
+            object.setOrientation(entry.tree.getModelOrientation());
+            object.setActive(true);
+            entry.object = object;
+            return;
+        }
+    }
+
+    private static boolean ready(State state, Client client)
+    {
+        WorldView world = client.getTopLevelWorldView();
+        Player player = client.getLocalPlayer();
+        LocalPoint point = player == null ? null : player.getLocalLocation();
+        return client.getGameState() == GameState.LOGGED_IN && world != null && world.isTopLevel()
+            && !world.isInstance() && world.getPlane() == 0 && world.getScene() == state.scene
+            && SeasonalSceneRecolorer.supports(state.scene) && point != null
+            && state.scene.getBaseX() == state.baseX && state.scene.getBaseY() == state.baseY
+            && point.getWorldView() == world.getId()
+            && SeasonalWorldArea.contains(state.scene.getBaseX() + point.getSceneX(),
+                state.scene.getBaseY() + point.getSceneY())
+            && (client.getDrawCallbacks() == null || client.getDrawCallbacks() instanceof GpuPlugin);
+    }
+
+    static int getCount(Object owner)
+    {
+        State state = STATES.get(owner);
+        if (state == null) { return 0; }
+        int count = 0;
+        for (Entry entry : state.entries.values()) { if (entry.object != null) { count++; } }
+        return count;
+    }
+
+    static void remove(Object owner, GameObject tree)
+    {
+        State state = STATES.get(owner);
+        if (state == null) { return; }
+        Entry entry = state.entries.remove(tree);
+        if (entry == null) { return; }
+        entry.clear();
+        state.selected.remove(entry);
+        state.models.remove(entry);
     }
 
     static void restore(Object owner)
@@ -124,24 +212,18 @@ final class WinterTreeFrost
             || source.getFaceCount() == 0 || source.getFaceCount() > 8192) { return null; }
         List<Surface> surfaces = surfaces(tree);
         if (surfaces.isEmpty()) { return null; }
-        ModelData[] layers = new ModelData[LAYERS];
-        for (int layer = 0; layer < layers.length; layer++)
+        ModelData data = source.shallowCopy().cloneVertices().cloneColors();
+        if (data.getFaceTextures() != null)
         {
-            ModelData data = source.shallowCopy().cloneVertices().cloneColors();
-            if (data.getFaceTextures() != null)
-            {
-                data.cloneTextures();
-                Arrays.fill(data.getFaceTextures(), (short) -1);
-            }
-            data.cloneTransparencies(true);
-            Arrays.fill(data.getFaceTransparencies(), (byte) 0);
-            GroundCover.reshapeFlakes(source, data, Season.WINTER, layer);
-            fit(source, data, surfaces, seed + 7919L * layer);
-            data.translate(0, 0, 0);
-            layers[layer] = data;
+            data.cloneTextures();
+            Arrays.fill(data.getFaceTextures(), (short) -1);
         }
-        ModelData combined = client.mergeModels(layers);
-        return combined == null ? null : combined.light(90, ModelData.DEFAULT_CONTRAST,
+        data.cloneTransparencies(true);
+        Arrays.fill(data.getFaceTransparencies(), (byte) 0);
+        GroundCover.reshapeFlakes(source, data, Season.WINTER, 0);
+        fit(source, data, surfaces, seed);
+        data.translate(0, 0, 0);
+        return data.light(90, ModelData.DEFAULT_CONTRAST,
             ModelData.DEFAULT_X, ModelData.DEFAULT_Y, ModelData.DEFAULT_Z);
     }
 
@@ -194,7 +276,7 @@ final class WinterTreeFrost
             double[] center = add(surface.a, add(scale(surface.ab, u), scale(surface.ac, v)));
             double clearance = Math.min(distanceToLine(center, surface.a, surface.b),
                 Math.min(distanceToLine(center, surface.b, surface.c), distanceToLine(center, surface.c, surface.a)));
-            double radius = Math.min(7 + random.nextDouble() * 5, clearance * 0.72);
+            double radius = Math.min(14 + random.nextDouble() * 10, clearance * 0.72);
             double centerX = (minX + maxX) / 2, centerZ = (minZ + maxZ) / 2;
             double oldRadius = 0;
             for (int vertex : vertices)
@@ -212,7 +294,7 @@ final class WinterTreeFrost
                     // its perimeter onto a gently uneven oval, preserving the
                     // angular order and central vertices of the existing mesh.
                     double angle = Math.atan2(dz, dx);
-                    double edge = radius * (0.93 + 0.05 * Math.sin(angle * 3 + visible * 1.7));
+                    double edge = radius * (0.89 + 0.09 * Math.sin(angle * 3 + visible * 1.7));
                     along = dx / distance * edge;
                     across = dz / distance * edge * 0.78;
                 }
@@ -238,12 +320,28 @@ final class WinterTreeFrost
         {
             return surfaces;
         }
-        for (int face = 0; face < Math.min(textures.length, a.length); face++)
+        int faces = Math.min(Math.min(textures.length, a.length), Math.min(b.length, c.length));
+        if (faces > 8192) { return surfaces; }
+        float top = Float.POSITIVE_INFINITY, bottom = Float.NEGATIVE_INFINITY;
+        for (int face = 0; face < faces; face++)
         {
-            if (textures[face] != 8 && textures[face] != 30) { continue; }
+            if (!SeasonalTextureTint.isLeafTexture(textures[face])) { continue; }
+            for (int vertex : new int[]{a[face], b[face], c[face]})
+            {
+                if (vertex < 0 || vertex >= x.length || vertex >= y.length || vertex >= z.length)
+                { return new ArrayList<>(); }
+                top = Math.min(top, y[vertex]); bottom = Math.max(bottom, y[vertex]);
+            }
+        }
+        float cutoff = top + (bottom - top) * 0.72f;
+        for (int face = 0; face < faces; face++)
+        {
+            if (!SeasonalTextureTint.isLeafTexture(textures[face])
+                || (y[a[face]] + y[b[face]] + y[c[face]]) / 3f > cutoff) { continue; }
             Surface surface = new Surface(point(x, y, z, a[face]), point(x, y, z, b[face]), point(x, y, z, c[face]));
-            // Snow rests on upward and outward foliage; avoid undersides and tiny slivers.
-            if (surface.area >= 40 && surface.normal[1] < 0.45) { surfaces.add(surface); }
+            // Snow rests on upper, upward-facing foliage; keep hanging skirts and undersides green.
+            if (Double.isFinite(surface.area) && surface.area >= 40 && surface.normal[1] < -0.2)
+            { surfaces.add(surface); }
         }
         return surfaces;
     }
@@ -285,7 +383,12 @@ final class WinterTreeFrost
     private static final class State
     {
         final Map<GameObject, Entry> entries = new IdentityHashMap<>();
+        final List<Entry> selected = new ArrayList<>();
+        final Map<Entry, Model> models = new LinkedHashMap<>(64, 0.75f, true);
         Client client;
+        Scene scene;
+        int baseX, baseY;
+        int lastCycle = Integer.MIN_VALUE, lastBuilds;
     }
 
     private static final class Entry
@@ -294,6 +397,7 @@ final class WinterTreeFrost
         final Model model;
         RuneLiteObject object;
         boolean seen, wanted;
+        int retryCycle;
         long distance;
         Entry(GameObject tree, Model model) { this.tree = tree; this.model = model; }
         void clear() { if (object != null) { object.setActive(false); object = null; } }

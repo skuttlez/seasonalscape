@@ -38,6 +38,7 @@ public class SeasonalScapePlugin extends Plugin
     private GroundCover groundCover;
     private Scene lastScene;
     private DrawCallbacks lastRenderer;
+    private int lastPlane = -1;
     private volatile Season activeSeason;
     private volatile String status = "Log in to preview";
     private volatile boolean running;
@@ -81,6 +82,7 @@ public class SeasonalScapePlugin extends Plugin
         });
         lastScene = null;
         lastRenderer = null;
+        lastPlane = -1;
         activeSeason = null;
         status = "Disabled";
     }
@@ -93,6 +95,7 @@ public class SeasonalScapePlugin extends Plugin
         {
             WorldView world = client.getTopLevelWorldView();
             WinterSnowfall.update(recolorer, client, world == null ? null : world.getScene());
+            if (config.foliage()) { WinterTreeFrost.refresh(recolorer, client); }
         }
         else if (recolorer != null)
         {
@@ -111,12 +114,17 @@ public class SeasonalScapePlugin extends Plugin
     public void onPostClientTick(PostClientTick event)
     {
         // Spread surface work across client ticks, before GPU's zone uploads.
-        if (running && recolorer != null) { WinterSurfaceSnow.tick(recolorer); }
+        if (running && recolorer != null)
+        {
+            WinterSurfaceSnow.tick(recolorer);
+            WinterTreeFrost.tick(recolorer);
+        }
     }
 
     @Subscribe
     public void onGameObjectDespawned(GameObjectDespawned event)
     {
+        if (recolorer != null) { WinterTreeFrost.remove(recolorer, event.getGameObject()); }
         dirty = true;
         SeasonalSceneSync.requestRefresh(this);
     }
@@ -159,6 +167,7 @@ public class SeasonalScapePlugin extends Plugin
         if (event.getGameState() != GameState.LOGGED_IN && recolorer != null)
         {
             SeasonalAir.clear(recolorer);
+            WinterTreeFrost.restore(recolorer);
         }
         if (event.getGameState() == GameState.LOGIN_SCREEN || event.getGameState() == GameState.HOPPING)
         {
@@ -194,7 +203,8 @@ public class SeasonalScapePlugin extends Plugin
             status = "Use default graphics or GPU";
             return;
         }
-        if (dirty || scene != lastScene || season != activeSeason || renderer != lastRenderer)
+        if (dirty || scene != lastScene || season != activeSeason || renderer != lastRenderer
+            || view.getPlane() != lastPlane)
         {
             // Packed texture tints are valid only in GPU's bright-texture mode.
             // Switching renderer must restore them before software draws again.
@@ -205,6 +215,7 @@ public class SeasonalScapePlugin extends Plugin
             if (scene != lastScene || season != activeSeason) { groundCover.clear(); }
             lastScene = scene;
             lastRenderer = renderer;
+            lastPlane = view.getPlane();
             activeSeason = season;
             dirty = false;
         }

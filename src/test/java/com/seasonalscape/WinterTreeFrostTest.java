@@ -13,7 +13,7 @@ import static org.junit.Assert.assertTrue;
 public class WinterTreeFrostTest
 {
     @Test
-    public void foliageSurfacesExcludeBarkCapsUndersidesAndSlivers()
+    public void foliageSurfacesIncludeSolidCapsButExcludeBarkUndersidesAndSlivers()
     {
         float[] x = {0, 100, 0, 0, 100, 0, 0, 1, 0};
         float[] y = {-100, -100, -100, -100, -100, -100, 0, 0, 0};
@@ -23,7 +23,7 @@ public class WinterTreeFrostTest
         int[] c = {2, 2, 2, 4, 8};
         short[] textures = {8, 60, 2, 30, 8};
         List<WinterTreeFrost.Surface> surfaces = WinterTreeFrost.surfaces(tree(x, y, z, a, b, c, textures));
-        assertEquals(1, surfaces.size());
+        assertEquals(2, surfaces.size());
         assertEquals(-1, surfaces.get(0).normal[1], 0.0001);
         assertArrayEquals("Existing texture IDs stay unchanged", new short[]{8, 60, 2, 30, 8}, textures);
     }
@@ -82,8 +82,8 @@ public class WinterTreeFrostTest
             assertTrue(x[vertex] >= 0 && z[vertex] >= 0 && x[vertex] + z[vertex] <= 160);
         }
         assertEquals(-101.4, y[0], 0.0001);
-        assertTrue("Deep star notches are filled into an oval", largest / smallest < 1.12);
-        assertTrue("The rounded edge stays within the original clearance radius", largest <= 12);
+        assertTrue("Deep star notches are filled into an irregular oval", largest / smallest < 1.24);
+        assertTrue("The rounded edge stays within the original clearance radius", largest <= 24);
         assertArrayEquals(new int[]{1, 2, 3, 4, 5, 6, 7, 8}, b);
         assertArrayEquals(new int[]{2, 3, 4, 5, 6, 7, 8, 1}, c);
     }

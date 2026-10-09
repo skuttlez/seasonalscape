@@ -73,9 +73,11 @@ public final class SeasonalSceneRecolorer
         Tile[][][] tiles = scene.getExtendedTiles();
         if (tiles == null || tiles.length == 0 || tiles[0] == null)
         {
+            WinterTreeFrost.restore(this);
             return;
         }
         int width = tiles[0].length;
+        if (season == Season.WINTER && foliage) { WinterTreeFrost.begin(this); }
         BitSet dirty = new BitSet();
         BitSet treeZones = new BitSet();
         boolean treesMutated = false;
@@ -144,6 +146,7 @@ public final class SeasonalSceneRecolorer
                 }
             }
         }
+        if (season == Season.WINTER && foliage) { WinterTreeFrost.end(this); }
         // Shared model colors and multi-tile objects can affect several upload zones.
         if (treesMutated) { dirty.or(treeZones); }
         if (grassMutated)
@@ -253,6 +256,7 @@ public final class SeasonalSceneRecolorer
             "Yew", "Yew tree", "Maple tree")
             .contains(definition.getName())) { return false; }
         Model model = (Model) object.getRenderable();
+        if (season == Season.WINTER) { WinterTreeFrost.update(this, client, object, model); }
         short[] textures = model.getFaceTextures();
         int[][] channels = {model.getFaceColors1(), model.getFaceColors2(), model.getFaceColors3()};
         boolean affected = false;
