@@ -320,23 +320,43 @@ final class WinterTreeFrost
         {
             return surfaces;
         }
-        int faces = Math.min(Math.min(textures.length, a.length), Math.min(b.length, c.length));
-        if (faces > 8192) { return surfaces; }
+        int[] colors = tree.getFaceColors3();
+        byte[] alpha = tree.getFaceTransparencies();
+        int faces = Math.min(tree.getFaceCount(),
+            Math.min(Math.min(textures.length, a.length), Math.min(b.length, c.length)));
+        if (colors != null) { faces = Math.min(faces, colors.length); }
+        if (alpha != null) { faces = Math.min(faces, alpha.length); }
+        int vertices = Math.min(tree.getVerticesCount(), Math.min(x.length, Math.min(y.length, z.length)));
+        if (faces <= 0 || faces > 8192 || vertices <= 0) { return surfaces; }
+        boolean[] usable = new boolean[faces];
         float top = Float.POSITIVE_INFINITY, bottom = Float.NEGATIVE_INFINITY;
         for (int face = 0; face < faces; face++)
         {
-            if (!SeasonalTextureTint.isLeafTexture(textures[face])) { continue; }
+            if (!SeasonalTextureTint.isLeafTexture(textures[face])
+                || colors != null && colors[face] == -2
+                || alpha != null && (alpha[face] & 255) > 128) { continue; }
+            boolean valid = true;
             for (int vertex : new int[]{a[face], b[face], c[face]})
             {
-                if (vertex < 0 || vertex >= x.length || vertex >= y.length || vertex >= z.length)
-                { return new ArrayList<>(); }
-                top = Math.min(top, y[vertex]); bottom = Math.max(bottom, y[vertex]);
+                if (vertex < 0 || vertex >= vertices || !Float.isFinite(x[vertex])
+                    || !Float.isFinite(y[vertex]) || !Float.isFinite(z[vertex]))
+                {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) { continue; }
+            usable[face] = true;
+            for (int vertex : new int[]{a[face], b[face], c[face]})
+            {
+                top = Math.min(top, y[vertex]);
+                bottom = Math.max(bottom, y[vertex]);
             }
         }
         float cutoff = top + (bottom - top) * 0.72f;
         for (int face = 0; face < faces; face++)
         {
-            if (!SeasonalTextureTint.isLeafTexture(textures[face])
+            if (!usable[face]
                 || (y[a[face]] + y[b[face]] + y[c[face]]) / 3f > cutoff) { continue; }
             Surface surface = new Surface(point(x, y, z, a[face]), point(x, y, z, b[face]), point(x, y, z, c[face]));
             // Snow rests on upper, upward-facing foliage; keep hanging skirts and undersides green.

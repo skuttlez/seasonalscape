@@ -8,6 +8,8 @@ Build verification: compiled against RuneLite 1.13.1, including a separate produ
 
 ## Seasons
 
+Version 0.1.21 fixes seasonal color bands on shaded grass and tree faces. Autumn now recolors dark and olive grass consistently; each recolored tree triangle keeps one hue and saturation while retaining its corner lighting. This avoids repeated bright bands when the GPU interpolates packed HSL colors with Smooth banding disabled. Mixed foliage/trunk faces are left intact, and hidden or unused model faces are excluded. This was checked with automated regressions and an offline reproduction of RuneLite's shader behavior; the reported members-area locations still need an in-game visual check.
+
 | Season | World changes |
 | --- | --- |
 | Spring | Fresh green grass and foliage, low pastel/white blossom clusters spread across the loaded outdoor map, sparse drifting pink and white petals |
@@ -56,12 +58,13 @@ Requires JDK 17+ to run Gradle; plugin bytecode targets Java 11. The checked-in 
 .\gradlew.bat run
 ```
 
-The plugin JAR is `build/libs/seasonalscape-0.1.20.jar`. A standalone development client can be built with `shadowJar`. To test against a later RuneLite release, use `-PruneLiteVersion=latest.release` and repeat the live checks below.
+The plugin JAR is `build/libs/seasonalscape-0.1.21.jar`. A standalone development client can be built with `shadowJar`. To test against a later RuneLite release, use `-PruneLiteVersion=latest.release` and repeat the live checks below.
 
 ## Live acceptance checks
 
 - On default graphics, check autumn trees/grass/leaves, winter snowy ground, spring and summer.
 - Repeat with the built-in GPU enabled; switching seasons should update the loaded scene.
+- With GPU Smooth banding both on and off, inspect shaded grass beside trees, fences and flowers in every season. Check for bright stripes, then disable SeasonalScape to confirm original colors restore.
 - Rotate/zoom the camera: ground cover should sit on the terrain and be occluded by world geometry.
 - Zoom fully out in winter: snowfall should extend into the higher view, while retaining flakes near the ground. Recheck entering a roofed area and switching out of winter.
 - Cross region boundaries while running: seasonal materials should remain active during loading, with new geometry recolored before GPU uploads.

@@ -27,6 +27,10 @@ final class SeasonalPalette
             int lightness = color & 127;
             if (season == Season.SPRING) { return pack(20, 4, lightness + 9); }
             if (season == Season.SUMMER) { return pack(17, 4, lightness + 4); }
+            // GPU's classic shading interpolates packed HSL. Every corner of
+            // classified grass needs the same hue/saturation, including olive
+            // underlays and dark shadows, to avoid wrapped lightness bands.
+            if (season == Season.AUTUMN) { return pack(9, 3, lightness + 2); }
         }
         return recolor(color, season, false);
     }

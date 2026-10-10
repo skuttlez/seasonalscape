@@ -372,6 +372,8 @@ public class WinterTreeFrostLifecycleTest
                 case "getFaceIndices2": return new int[]{1};
                 case "getFaceIndices3": return new int[]{2};
                 case "getFaceTextures": return new short[]{8};
+                case "getFaceColors3": return new int[]{80};
+                case "getFaceTransparencies": return null;
                 case "getVerticesCount": return 3;
                 case "getFaceCount": return 1;
                 default: throw new AssertionError(method);

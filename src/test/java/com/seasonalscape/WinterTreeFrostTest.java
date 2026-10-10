@@ -13,6 +13,54 @@ import static org.junit.Assert.assertTrue;
 public class WinterTreeFrostTest
 {
     @Test
+    public void spareFaceAndVertexCapacityCannotCreateDistantSnowSurfaces()
+    {
+        float[] x = {0, 100, 0, 1000, 1100, 1000};
+        float[] y = {-100, -100, -100, -100, -100, -100};
+        float[] z = {0, 0, 100, 1000, 1000, 1100};
+        int[] a = {0, 3}, b = {1, 4}, c = {2, 5};
+        short[] textures = {8, 8};
+        for (int[] counts : new int[][]{{1, 6}, {2, 3}})
+        {
+            Model model = tree(x, y, z, a, b, c, textures, counts[0], counts[1], new int[]{80, 80}, null);
+            List<WinterTreeFrost.Surface> surfaces = WinterTreeFrost.surfaces(model);
+            assertEquals("Only active geometry receives snow", 1, surfaces.size());
+            assertEquals("No deposit can land on unused distant vertices", 0, surfaces.get(0).a[0], 0);
+        }
+    }
+
+    @Test
+    public void hiddenAndTransparentLeafFacesDoNotReceiveSnow()
+    {
+        int[] third = {80, -2, 80, 80, -1};
+        byte[] alpha = {0, 0, (byte) 255, (byte) 129, (byte) 128};
+        Model model = tree(new float[]{0, 100, 0}, new float[]{-100, -100, -100},
+            new float[]{0, 0, 100}, new int[]{0, 0, 0, 0, 0}, new int[]{1, 1, 1, 1, 1},
+            new int[]{2, 2, 2, 2, 2}, new short[]{8, 8, 8, 8, 8}, 5, 3, third, alpha);
+        assertEquals("Keep visible and flat faces; skip hidden and high-transparency faces", 2,
+            WinterTreeFrost.surfaces(model).size());
+        assertArrayEquals(new int[]{80, -2, 80, 80, -1}, third);
+        assertArrayEquals(new byte[]{0, 0, (byte) 255, (byte) 129, (byte) 128}, alpha);
+    }
+
+    @Test
+    public void malformedFaceAndShortOptionalChannelsDoNotDiscardValidCanopy()
+    {
+        float[] x = {0, 100, 0}, y = {-100, -100, -100}, z = {0, 0, 100};
+        int[] a = {0, 999}, b = {1, 1}, c = {2, 2};
+        short[] textures = {8, 30};
+        assertEquals("An invalid leaf index must not discard other valid faces", 1,
+            WinterTreeFrost.surfaces(tree(x, y, z, a, b, c, textures, 2, 3, null, null)).size());
+        a[1] = 0;
+        assertEquals("Short alpha arrays cap readable faces", 1,
+            WinterTreeFrost.surfaces(tree(x, y, z, a, b, c, textures, 2, 3,
+                new int[]{80, 80}, new byte[]{0})).size());
+        assertEquals("Short lighting arrays cap readable faces", 1,
+            WinterTreeFrost.surfaces(tree(x, y, z, a, b, c, textures, 2, 3,
+                new int[]{80}, null)).size());
+    }
+
+    @Test
     public void foliageSurfacesIncludeSolidCapsButExcludeBarkUndersidesAndSlivers()
     {
         float[] x = {0, 100, 0, 0, 100, 0, 0, 1, 0};
@@ -90,6 +138,12 @@ public class WinterTreeFrostTest
 
     private static Model tree(float[] x, float[] y, float[] z, int[] a, int[] b, int[] c, short[] textures)
     {
+        return tree(x, y, z, a, b, c, textures, a.length, x.length, null, null);
+    }
+
+    private static Model tree(float[] x, float[] y, float[] z, int[] a, int[] b, int[] c,
+        short[] textures, int faces, int vertices, int[] third, byte[] alpha)
+    {
         return (Model) Proxy.newProxyInstance(Model.class.getClassLoader(), new Class<?>[]{Model.class},
             (proxy, method, args) -> {
                 switch (method.getName())
@@ -97,10 +151,14 @@ public class WinterTreeFrostTest
                     case "getVerticesX": return x;
                     case "getVerticesY": return y;
                     case "getVerticesZ": return z;
+                    case "getVerticesCount": return vertices;
+                    case "getFaceCount": return faces;
                     case "getFaceIndices1": return a;
                     case "getFaceIndices2": return b;
                     case "getFaceIndices3": return c;
                     case "getFaceTextures": return textures;
+                    case "getFaceColors3": return third;
+                    case "getFaceTransparencies": return alpha;
                     default: throw new AssertionError(method.getName());
                 }
             });

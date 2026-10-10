@@ -101,25 +101,8 @@ public final class SeasonalSceneRecolorer
                         && tile.getGroundObject().getRenderable() instanceof Model)
                     {
                         Model blades = (Model) tile.getGroundObject().getRenderable();
-                        short[] textures = blades.getFaceTextures();
-                        int[][] channels = {blades.getFaceColors1(), blades.getFaceColors2(), blades.getFaceColors3()};
                         long beforeGrass = mutationVersion;
-                        boolean affectedGrass = false;
-                        for (int[] channel : channels)
-                        {
-                            int[] source = original(channel);
-                            for (int face = 0; face < channel.length; face++)
-                            {
-                                // Terrain also includes olive underlays, but
-                                // those hues can be brown ground decorations.
-                                if ((textures == null || textures[face] < 0)
-                                    && (source[face] >>> 10) >= 10)
-                                {
-                                    affectedGrass |= change(channel, face,
-                                        SeasonalGroundColors.ground(source[face], season));
-                                }
-                            }
-                        }
+                        boolean affectedGrass = recolorModel(blades, season, false, false);
                         if (affectedGrass)
                         {
                             changedModels = true;
@@ -257,25 +240,91 @@ public final class SeasonalSceneRecolorer
             .contains(definition.getName())) { return false; }
         Model model = (Model) object.getRenderable();
         if (season == Season.WINTER) { WinterTreeFrost.update(this, client, object, model); }
+        return recolorModel(model, season, true, tintTextures);
+    }
+
+    /** Keep a face's packed hue/saturation coherent so interpolation cannot wrap lightness. */
+    private boolean recolorModel(Model model, Season season, boolean foliage, boolean tintTextures)
+    {
         short[] textures = model.getFaceTextures();
         int[][] channels = {model.getFaceColors1(), model.getFaceColors2(), model.getFaceColors3()};
+        if (channels[0] == null || channels[1] == null || channels[2] == null) { return false; }
+        int count = Math.min(model.getFaceCount(), Math.min(channels[0].length,
+            Math.min(channels[1].length, channels[2].length)));
+        if (textures != null) { count = Math.min(count, textures.length); }
+        if (count <= 0) { return false; }
+        Colors[] saved = {arrays.computeIfAbsent(channels[0], Colors::new),
+            arrays.computeIfAbsent(channels[1], Colors::new), arrays.computeIfAbsent(channels[2], Colors::new)};
+        int[] desired = new int[3];
         boolean affected = false;
-        for (int[] channel : channels)
+        for (int face = 0; face < count; face++)
         {
-            int[] source = original(channel);
-            for (int i = 0; i < channel.length; i++)
+            int third = saved[2].original[face];
+            if (third == -2) { continue; }
+            int corners = third == -1 ? 1 : 3;
+            int texture = textures == null ? -1 : textures[face];
+            boolean textured = texture >= 0;
+            if (textured && (!foliage || !tintTextures || !SeasonalTextureTint.isLeafTexture(texture))) { continue; }
+            boolean eligible = true;
+            for (int channel = 0; channel < corners; channel++)
             {
-                if (textures == null || textures[i] < 0)
+                int source = saved[channel].original[face];
+                if (textured)
                 {
-                    affected |= change(channel, i, SeasonalPalette.foliage(source[i], season));
+                    // A colored value is another material modifier, not texture brightness.
+                    eligible &= source >= 0 && source <= 127;
+                    desired[channel] = SeasonalTextureTint.foliage(source, texture, season);
                 }
-                else if (tintTextures && SeasonalTextureTint.isLeafTexture(textures[i]))
+                else
                 {
-                    affected |= change(channel, i, SeasonalTextureTint.foliage(source[i], textures[i], season));
+                    int hue = source >>> 10;
+                    // Include dark green corners, but never pull a brown trunk into a leaf face.
+                    eligible &= SeasonalGroundColors.isGrass(source) && hue >= (foliage ? 12 : 10);
+                    desired[channel] = foliage ? foliageColor(source, season)
+                        : SeasonalGroundColors.ground(source, season);
                 }
+            }
+            if (!eligible) { continue; }
+            if (!textured)
+            {
+                int chroma = desired[0] & ~127;
+                for (int channel = 1; channel < corners; channel++)
+                {
+                    desired[channel] = chroma | desired[channel] & 127;
+                }
+            }
+            // Preflight every participating corner before touching any of them.
+            // A competing writer must not leave a half-seasonal smooth triangle.
+            for (int channel = 0; channel < corners; channel++)
+            {
+                Colors colors = saved[channel];
+                if (channels[channel][face] != colors.last[face]) { colors.conflicted.set(face); }
+                eligible &= !colors.conflicted.get(face);
+            }
+            // Even flat faces depend on C's sentinel remaining owned and unchanged.
+            if (corners == 1)
+            {
+                if (channels[2][face] != saved[2].last[face]) { saved[2].conflicted.set(face); }
+                eligible &= !saved[2].conflicted.get(face);
+            }
+            if (!eligible) { continue; }
+            for (int channel = 0; channel < corners; channel++)
+            {
+                affected |= change(channels[channel], face, desired[channel]);
             }
         }
         return affected;
+    }
+
+    private static int foliageColor(int source, Season season)
+    {
+        int lightness = source & 127;
+        if (lightness >= 8) { return SeasonalPalette.foliage(source, season); }
+        // Apply the same palette to deep leaf shadows, preserving their relative lightness.
+        int lifted = SeasonalPalette.foliage((source & ~127) | 8, season);
+        int light = season == Season.WINTER ? 78 + lightness * 22 / 100
+            : (lifted & 127) - (8 - lightness);
+        return (lifted & ~127) | Math.max(2, Math.min(126, light));
     }
 
     private int[] original(int[] current)

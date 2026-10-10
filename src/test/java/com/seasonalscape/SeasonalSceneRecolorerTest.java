@@ -131,6 +131,46 @@ public class SeasonalSceneRecolorerTest
     }
 
     @Test
+    public void mixedOliveAndShadowedTerrainStaysSmoothThroughEverySeasonAndRestores()
+    {
+        Fixture paint = new Fixture();
+        int[] originalPaint = {8582, 9609, 12806, 16775};
+        System.arraycopy(originalPaint, 0, paint.paintColors, 0, originalPaint.length);
+        Fixture mesh = new Fixture();
+        int[] a = {8582, 12 << 10 | 3 << 7 | 2, 7200, 12345678};
+        int[] b = {GREEN, GREEN + 40, 7202, 12345678};
+        int[] c = {9609, 16 << 10 | 4 << 7 | 7, 7204, 12345678};
+        int[] originalA = a.clone(), originalB = b.clone(), originalC = c.clone();
+        mesh.paint = null;
+        mesh.model = triangleModel(a, b, c, null);
+        for (Season season : new Season[]{Season.AUTUMN, Season.WINTER, Season.SPRING,
+            Season.SUMMER, Season.AUTUMN, Season.AUTUMN})
+        {
+            paint.apply(season, true, false);
+            mesh.apply(season, true, false);
+            assertEquals(1, paint.renderer.getChangedTiles());
+            assertEquals(1, mesh.renderer.getChangedTiles());
+            SeasonalTerrainPaletteTest.assertStableInterpolation(paint.paintColors[0],
+                paint.paintColors[1], paint.paintColors[3]);
+            SeasonalTerrainPaletteTest.assertStableInterpolation(paint.paintColors[1],
+                paint.paintColors[2], paint.paintColors[3]);
+            for (int face = 0; face < 2; face++)
+            {
+                SeasonalTerrainPaletteTest.assertStableInterpolation(a[face], b[face], c[face]);
+            }
+            assertArrayEquals(new int[]{7200, 12345678}, new int[]{a[2], a[3]});
+            assertArrayEquals(new int[]{7202, 12345678}, new int[]{b[2], b[3]});
+            assertArrayEquals(new int[]{7204, 12345678}, new int[]{c[2], c[3]});
+        }
+        paint.renderer.restore();
+        mesh.renderer.restore();
+        assertArrayEquals(originalPaint, paint.paintColors);
+        assertArrayEquals(originalA, a);
+        assertArrayEquals(originalB, b);
+        assertArrayEquals(originalC, c);
+    }
+
+    @Test
     public void triangleColorsHandleAliasedChannelsAndPreserveExternalWrites()
     {
         Fixture f = new Fixture();
