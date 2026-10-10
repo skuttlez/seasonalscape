@@ -21,7 +21,6 @@ import net.runelite.api.RuneLiteObject;
 import net.runelite.api.Scene;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
-import net.runelite.client.plugins.gpu.GpuPlugin;
 
 /** Small snow deposits that follow foliage surfaces without replacing their cutout texture. */
 final class WinterTreeFrost
@@ -176,7 +175,7 @@ final class WinterTreeFrost
             && point.getWorldView() == world.getId()
             && SeasonalWorldArea.contains(state.scene.getBaseX() + point.getSceneX(),
                 state.scene.getBaseY() + point.getSceneY())
-            && (client.getDrawCallbacks() == null || client.getDrawCallbacks() instanceof GpuPlugin);
+            && SeasonalRenderer.supported(client.getDrawCallbacks());
     }
 
     static int getCount(Object owner)

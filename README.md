@@ -2,11 +2,13 @@
 
 A RuneLite development plugin that follows the real-world calendar or a manually selected season. It changes eligible **3D ground and tree colors**, and adds small decorative ground-cover models. It targets RuneLite's default graphics and built-in GPU plugin.
 
-**Status: development release; not yet published on the Plugin Hub.** Seasonal effects now cover eligible tiles and supported trees across the main overworld, including members' areas. Earlier builds received short logged-in previews of all four seasons with the built-in GPU in free-to-play outdoor areas. Spring and summer each placed 120 flower patches across roughly 97 by 98 tiles of the loaded landscape; winter had 384 flakes across its lower and raised upper layers. Version 0.1.20 adds tree-snow patches: a short logged-in preview showed 24 active tree-snow objects and reported 60 FPS. This is a brief observation, not a broad performance benchmark. Expanded members-area coverage has automated eligibility checks, but has not been visually verified with a members account; wider visual and performance testing remains.
+**Status: the initial Plugin Hub submission was accepted; this checkout can contain updates awaiting release.** Seasonal effects now cover eligible tiles and supported trees across the main overworld, including members' areas. Earlier builds received short logged-in previews of all four seasons with the built-in GPU in free-to-play outdoor areas. Spring and summer each placed 120 flower patches across roughly 97 by 98 tiles of the loaded landscape; winter had 384 flakes across its lower and raised upper layers. Version 0.1.20 adds tree-snow patches: a short logged-in preview showed 24 active tree-snow objects and reported 60 FPS. This is a brief observation, not a broad performance benchmark. Expanded members-area coverage has automated eligibility checks, but has not been visually verified with a members account; wider visual and performance testing remains.
 
 Build verification: compiled against RuneLite 1.13.1, including a separate production-source compile with the official Plugin Hub standard build template. Automated tests cover calendar boundaries, expanded-area eligibility, stable flower/leaf placement across the loaded scene, palette transformations, scene restoration and exclusions, shared color arrays, untextured cache models, slope-aware ground cover, camera-limited structure snow, snowfall zoom response, generated audio, and GPU foliage tint bounds. See [Plugin Hub submission #18106](https://github.com/runelite/plugin-hub/pull/18106) for RuneLite's current build and review status.
 
 ## Seasons
+
+Version 0.1.22 recognizes Retro NPC Swapper's renderer wrapper when it delegates to RuneLite's built-in GPU. Terrain, foliage, particles and snow use the same compatibility check, and scene refreshes pass through Retro's wrapper. The optional integration uses only its public `getDelegate()` method; it adds no plugin dependency, private-field access, OpenGL calls or custom renderer. Retro wrapping 117 HD, unknown renderers, or an unavailable delegate remains unsupported. Validation includes 139 project tests and two isolated checks against Retro's unmodified published wrapper. A short logged-in winter check with the installed Retro plugin confirmed both plugins active, the Retro-to-GPU delegate chain, visible snow, 384 active snowflakes and 24 tree-snow objects. This checks that session and location, not every season or game area in live play.
 
 Version 0.1.21 fixes seasonal color bands on shaded grass and tree faces. Autumn now recolors dark and olive grass consistently; each recolored tree triangle keeps one hue and saturation while retaining its corner lighting. This avoids repeated bright bands when the GPU interpolates packed HSL colors with Smooth banding disabled. Mixed foliage/trunk faces are left intact, and hidden or unused model faces are excluded. This was checked with automated regressions and an offline reproduction of RuneLite's shader behavior; the reported members-area locations still need an in-game visual check.
 
@@ -47,7 +49,7 @@ When enabled, structure snow schedules nearby exposed surfaces inside a padded c
 
 For a Jagex account, a development client needs the additional steps in [RuneLite's official Jagex account development guide](https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts). Complete those locally. The guide uses a credentials file that grants account access; keep it private and out of this repository. This plugin does not read credentials or change launcher settings.
 
-The ordinary RuneLite client cannot install this unpublished project by dragging in its JAR. Local testing uses the development launch above. Plugin Hub distribution requires a public source repository and review through the [official submission process](https://github.com/runelite/plugin-hub#submitting-a-plugin).
+Install the published version from RuneLite's Plugin Hub. The ordinary client cannot install a local development update by dragging in its JAR; use the development launch above to test this checkout. Plugin Hub updates require review through the [official submission process](https://github.com/runelite/plugin-hub#submitting-a-plugin).
 
 ## Build elsewhere
 
@@ -58,12 +60,13 @@ Requires JDK 17+ to run Gradle; plugin bytecode targets Java 11. The checked-in 
 .\gradlew.bat run
 ```
 
-The plugin JAR is `build/libs/seasonalscape-0.1.21.jar`. A standalone development client can be built with `shadowJar`. To test against a later RuneLite release, use `-PruneLiteVersion=latest.release` and repeat the live checks below.
+The plugin JAR is `build/libs/seasonalscape-0.1.22.jar`. A standalone development client can be built with `shadowJar`. To test against a later RuneLite release, use `-PruneLiteVersion=latest.release` and repeat the live checks below.
 
 ## Live acceptance checks
 
 - On default graphics, check autumn trees/grass/leaves, winter snowy ground, spring and summer.
 - Repeat with the built-in GPU enabled; switching seasons should update the loaded scene.
+- With GPU enabled, toggle Retro NPC Swapper while seasonal effects are active, switch through all seasons and cross a scene boundary. Check restoration when SeasonalScape is disabled. Retro with 117 HD remains unsupported.
 - With GPU Smooth banding both on and off, inspect shaded grass beside trees, fences and flowers in every season. Check for bright stripes, then disable SeasonalScape to confirm original colors restore.
 - Rotate/zoom the camera: ground cover should sit on the terrain and be occluded by world geometry.
 - Zoom fully out in winter: snowfall should extend into the higher view, while retaining flakes near the ground. Recheck entering a roofed area and switching out of winter.

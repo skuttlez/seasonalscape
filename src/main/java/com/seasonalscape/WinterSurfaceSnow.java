@@ -32,7 +32,7 @@ import net.runelite.api.TileObject;
 import net.runelite.api.WallObject;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
-import net.runelite.client.plugins.gpu.GpuPlugin;
+import net.runelite.api.hooks.DrawCallbacks;
 
 /** Thin winter coatings on exposed structures; furniture source meshes remain untouched. */
 final class WinterSurfaceSnow
@@ -77,8 +77,8 @@ final class WinterSurfaceSnow
         {
             restore(owner); return;
         }
-        Object renderer = client.getDrawCallbacks();
-        if (renderer != null && !(renderer instanceof GpuPlugin)) { restore(owner); return; }
+        DrawCallbacks renderer = client.getDrawCallbacks();
+        if (!SeasonalRenderer.supported(renderer)) { restore(owner); return; }
         WorldView world = client.getTopLevelWorldView();
         if (world != null && world.getScene() != state.scene) { return; }
         int cycle = client.getGameCycle();
@@ -681,7 +681,8 @@ final class WinterSurfaceSnow
         }
         void invalidate(int budget)
         {
-            if (client.getDrawCallbacks() instanceof GpuPlugin && client.getTopLevelWorldView() != null)
+            DrawCallbacks callbacks = client.getDrawCallbacks();
+            if (SeasonalRenderer.gpu(callbacks) != null && client.getTopLevelWorldView() != null)
             {
                 Scene current = client.getTopLevelWorldView().getScene();
                 if (current == scene)
@@ -697,7 +698,7 @@ final class WinterSurfaceSnow
                             if (bit < 0) { bit = dirty.nextSetBit(0); }
                             uploadCursor = bit + 1;
                         }
-                        client.getDrawCallbacks().invalidateZone(scene, bit / width, bit % width);
+                        callbacks.invalidateZone(scene, bit / width, bit % width);
                         dirty.clear(bit); urgent.clear(bit);
                         uploaded++; lastGpuZones++;
                     }
@@ -715,7 +716,7 @@ final class WinterSurfaceSnow
                         {
                             for (int y = 0; y < currentWidth; y++)
                             {
-                                client.getDrawCallbacks().invalidateZone(current, x, y);
+                                callbacks.invalidateZone(current, x, y);
                             }
                         }
                     }

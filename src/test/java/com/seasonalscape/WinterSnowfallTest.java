@@ -1,5 +1,6 @@
 package com.seasonalscape;
 
+import com.retronpcswapper.RetroDrawCallbacks;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
@@ -19,6 +20,8 @@ import net.runelite.api.Scene;
 import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.hooks.DrawCallbacks;
+import net.runelite.client.plugins.gpu.GpuPlugin;
 import org.junit.Test;
 
 import static org.junit.Assert.assertArrayEquals;
@@ -129,6 +132,30 @@ public class WinterSnowfallTest
             for (byte[] row : f.flags[2]) { java.util.Arrays.fill(row, (byte) 0); }
             WinterSnowfall.update(f.owner, f.client, f.scene);
             assertEquals("Returning outdoors repopulates both layers", 384, WinterSnowfall.getCount(f.owner));
+        }
+        finally { WinterSnowfall.clear(f.owner); }
+    }
+
+    @Test
+    public void retroGpuKeepsSnowfallAndAnUnsupportedWrappedRendererClearsIt() throws Exception
+    {
+        SnowFixture f = new SnowFixture();
+        try
+        {
+            Set<Object> registered = Collections.newSetFromMap(new IdentityHashMap<>());
+            registered.addAll(f.registered);
+            f.callbacks = new RetroDrawCallbacks(new GpuPlugin());
+            WinterSnowfall.update(f.owner, f.client, f.scene);
+            assertEquals("The NPC wrapper retains the full snowfall volume", 384,
+                WinterSnowfall.getCount(f.owner));
+            assertEquals("Compatible callbacks reuse the existing flakes", registered, f.registered);
+
+            f.callbacks = new RetroDrawCallbacks(proxy(DrawCallbacks.class, (name, args) -> null));
+            WinterSnowfall.update(f.owner, f.client, f.scene);
+            assertEquals("A wrapper must not hide an unsupported renderer", 0,
+                WinterSnowfall.getCount(f.owner));
+            assertTrue("Unsupported rendering unregisters every particle", f.registered.isEmpty());
+            for (RuneLiteObject flake : f.flakes) { assertFalse(flake.isActive()); }
         }
         finally { WinterSnowfall.clear(f.owner); }
     }
@@ -258,6 +285,7 @@ public class WinterSnowfallTest
         final List<RuneLiteObject> flakes;
         final Field altitude, upperLayer;
         int cycle = 1, cameraZ = -1800, cameraReads;
+        DrawCallbacks callbacks;
 
         @SuppressWarnings("unchecked")
         SnowFixture() throws Exception
@@ -291,6 +319,7 @@ public class WinterSnowfallTest
                     case "getLocalPlayer": return player;
                     case "getGameState": return GameState.LOGGED_IN;
                     case "getGameCycle": return cycle;
+                    case "getDrawCallbacks": return callbacks;
                     case "getCameraZ": cameraReads++; return cameraZ;
                     case "registerRuneLiteObject": registered.add(args[0]); return null;
                     case "removeRuneLiteObject": registered.remove(args[0]); return null;

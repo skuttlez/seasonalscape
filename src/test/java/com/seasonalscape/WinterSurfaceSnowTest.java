@@ -1,5 +1,6 @@
 package com.seasonalscape;
 
+import com.retronpcswapper.RetroDrawCallbacks;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -25,6 +26,7 @@ import net.runelite.api.SceneTilePaint;
 import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.hooks.DrawCallbacks;
 import net.runelite.client.plugins.gpu.GpuPlugin;
 import org.junit.Test;
 import static org.junit.Assert.*;
@@ -83,8 +85,19 @@ public class WinterSurfaceSnowTest
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     public void disablingSharedRoofsRestoresMaterialsAndInvalidatesTheReplacementGpuScene() throws Exception
+    {
+        verifySharedRoofRestoration(false);
+    }
+
+    @Test
+    public void retroGpuRestoresSharedRoofsAndForwardsReplacementSceneInvalidation() throws Exception
+    {
+        verifySharedRoofRestoration(true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void verifySharedRoofRestoration(boolean wrapped) throws Exception
     {
         Tile[][][] oldTiles = new Tile[4][Constants.EXTENDED_SCENE_SIZE][Constants.EXTENDED_SCENE_SIZE];
         Tile[][][] currentTiles = new Tile[4][32][32];
@@ -93,8 +106,10 @@ public class WinterSurfaceSnowTest
         Scene currentScene = proxy(Scene.class,
             (name, args) -> name.equals("getExtendedTiles") ? currentTiles : null);
         RecordingGpu gpu = new RecordingGpu();
+        RetroDrawCallbacks wrapper = new RetroDrawCallbacks(gpu);
+        DrawCallbacks callbacks = wrapped ? wrapper : gpu;
         WorldView world = proxy(WorldView.class, (name, args) -> name.equals("getScene") ? currentScene : null);
-        Client client = proxy(Client.class, (name, args) -> name.equals("getDrawCallbacks") ? gpu
+        Client client = proxy(Client.class, (name, args) -> name.equals("getDrawCallbacks") ? callbacks
             : name.equals("getTopLevelWorldView") ? world : null);
         Class<?> stateType = Class.forName("com.seasonalscape.WinterSurfaceSnow$State");
         Constructor<?> constructor = stateType.getDeclaredConstructor(Client.class, Scene.class);
@@ -130,6 +145,11 @@ public class WinterSurfaceSnowTest
             assertArrayEquals(new int[]{100}, colors);
             assertArrayEquals(new short[]{45}, textures);
             assertEquals("Use the replacement scene's dimensions", 16, gpu.zones.size());
+            if (wrapped)
+            {
+                assertEquals("Restoration reaches GPU through the active NPC wrapper", 16,
+                    wrapper.invalidatedZones);
+            }
             for (Scene invalidated : gpu.scenes)
             {
                 assertSame("Refresh GPU copies in the current scene", currentScene, invalidated);
@@ -277,16 +297,22 @@ public class WinterSurfaceSnowTest
     @Test
     public void roofScanIsBoundedNearbyAndIdleUntilTheViewChangesAndDisablingRestoresEverything() throws Exception
     {
-        verifyRoofScanBudgetsAndRestoration(3200, 3300);
+        verifyRoofScanBudgetsAndRestoration(3200, 3300, false);
     }
 
     @Test
     public void expandedOverworldRoofSnowKeepsTheSameVisibilityAndWorkBudgets() throws Exception
     {
-        verifyRoofScanBudgetsAndRestoration(1640, 3680);
+        verifyRoofScanBudgetsAndRestoration(1640, 3680, false);
     }
 
-    private static void verifyRoofScanBudgetsAndRestoration(int baseX, int baseY) throws Exception
+    @Test
+    public void retroGpuRoofSnowKeepsItsScanBudgetsAndForwardsZoneRefreshes() throws Exception
+    {
+        verifyRoofScanBudgetsAndRestoration(3200, 3300, true);
+    }
+
+    private static void verifyRoofScanBudgetsAndRestoration(int baseX, int baseY, boolean wrapped) throws Exception
     {
         Tile[][][] tiles = new Tile[4][Constants.EXTENDED_SCENE_SIZE][Constants.EXTENDED_SCENE_SIZE];
         byte[][][] flags = new byte[4][Constants.EXTENDED_SCENE_SIZE][Constants.EXTENDED_SCENE_SIZE];
@@ -330,6 +356,8 @@ public class WinterSurfaceSnowTest
         Player player = proxy(Player.class, (name, args) -> name.equals("getLocalLocation")
             ? new LocalPoint(16 * 128 + 64, 51 * 128 + 64, WorldView.TOPLEVEL) : null);
         RecordingGpu gpu = new RecordingGpu();
+        RetroDrawCallbacks wrapper = new RetroDrawCallbacks(gpu);
+        DrawCallbacks callbacks = wrapped ? wrapper : gpu;
         WorldView world = proxy(WorldView.class, (name, args) -> name.equals("getScene") ? scene : null);
         Client client = proxy(Client.class, (name, args) -> {
             assertTrue("Disabling structure snow only needs GPU cleanup, not Client." + name,
@@ -339,7 +367,7 @@ public class WinterSurfaceSnowTest
                 case "getGameState": return GameState.LOGGED_IN;
                 case "getLocalPlayer": return player;
                 case "getGameCycle": return cycle[0];
-                case "getDrawCallbacks": return gpu;
+                case "getDrawCallbacks": return callbacks;
                 case "getTopLevelWorldView": return world;
                 default: return null;
             }
@@ -379,6 +407,12 @@ public class WinterSurfaceSnowTest
             allowScans[0] = false;
             WinterSurfaceSnow.update(owner, client, scene, false);
             assertEquals(0, WinterSurfaceSnow.getCount(owner));
+            if (wrapped)
+            {
+                assertTrue("Coated roofs must request GPU uploads", wrapper.invalidatedZones > 0);
+                assertEquals("Every refresh and restoration passes through Retro's callback", gpu.scenes.size(),
+                    wrapper.invalidatedZones);
+            }
             for (int i = 0; i < colors.length; i++)
             {
                 assertArrayEquals(new int[]{70, 80, 90, 100}, colors[i]);

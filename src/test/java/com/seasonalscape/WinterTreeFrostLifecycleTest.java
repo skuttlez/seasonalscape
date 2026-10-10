@@ -1,5 +1,6 @@
 package com.seasonalscape;
 
+import com.retronpcswapper.RetroDrawCallbacks;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -16,6 +17,8 @@ import net.runelite.api.Scene;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.hooks.DrawCallbacks;
+import net.runelite.client.plugins.gpu.GpuPlugin;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -26,6 +29,41 @@ import static org.junit.Assert.assertTrue;
 
 public class WinterTreeFrostLifecycleTest
 {
+    @Test
+    public void retroGpuRetainsTreeSnowAndRejectsAnUnsupportedDelegate()
+    {
+        Fixture f = new Fixture();
+        GpuPlugin gpu = new GpuPlugin();
+        f.callbacks = gpu;
+        try
+        {
+            f.collect(f.tree(0, 0), f.tree(128, 0));
+            f.nextTick();
+            Snow existing = f.activeObject();
+            assertEquals(1, f.activeCount());
+
+            RetroDrawCallbacks retro = new RetroDrawCallbacks(gpu);
+            f.callbacks = retro;
+            f.refresh();
+            f.nextTick();
+            assertTrue("Enabling Retro does not remove existing tree snow", existing.active);
+            assertEquals("Queued snow still appears through the wrapper", 2, f.activeCount());
+            assertEquals(2, WinterTreeFrost.getCount(f.owner));
+            int builds = f.lights, objects = f.objects.size();
+
+            retro.setDelegate(proxy(DrawCallbacks.class, (object, method, args) -> {
+                throw new AssertionError("Unknown renderer must never be called: " + method);
+            }));
+            f.nextTick();
+            assertEquals("Unsupported wrapped renderers clear existing snow", 0, f.activeCount());
+            assertEquals(0, WinterTreeFrost.getCount(f.owner));
+            f.nextTick();
+            assertEquals("Rejected renderers cannot rebuild pending snow", builds, f.lights);
+            assertEquals(objects, f.objects.size());
+        }
+        finally { WinterTreeFrost.restore(f.owner); }
+    }
+
     @Test
     public void nearbyTreesAppearOnePerClientCycleAndStopAtTheNearestTreeLimit()
     {
@@ -271,6 +309,7 @@ public class WinterTreeFrostLifecycleTest
         LocalPoint point = new LocalPoint(originX, originY, WorldView.TOPLEVEL);
         int cycle = 100, plane, lights, nextId = 1, baseX = 3200, baseY = 3200;
         GameState gameState = GameState.LOGGED_IN;
+        DrawCallbacks callbacks;
         Scene scene = newScene();
         final WorldView world = proxy(WorldView.class, (object, method, args) -> {
             switch (method)
@@ -304,7 +343,7 @@ public class WinterTreeFrostLifecycleTest
                 case "getPlane": return plane;
                 case "getBaseX": return baseX;
                 case "getBaseY": return baseY;
-                case "getDrawCallbacks": return null;
+                case "getDrawCallbacks": return callbacks;
                 case "loadModelData": return new Mesh(this).modelData();
                 case "mergeModels": return ((ModelData[]) args[0])[0];
                 case "createRuneLiteObject":

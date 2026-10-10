@@ -13,7 +13,7 @@ repositories {
 // Override with -PruneLiteVersion=latest.release when testing future releases.
 def runeLiteVersion = findProperty('runeLiteVersion') ?: '1.13.1'
 group = 'com.seasonalscape'
-version = '0.1.21'
+version = '0.1.22'
 
 dependencies {
     compileOnly "net.runelite:client:${runeLiteVersion}"
@@ -49,4 +49,5 @@ tasks.register('shadowJar', Jar) {
     from { configurations.testRuntimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
     exclude 'META-INF/INDEX.LIST', 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', '**/module-info.class'
     exclude '**/*Test.class', '**/*Test$*.class'
+    exclude 'com/retronpcswapper/**'
 }

@@ -17,7 +17,6 @@ import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.hooks.DrawCallbacks;
-import net.runelite.client.plugins.gpu.GpuPlugin;
 
 /** Sparse, depth-tested spring petals and summer butterflies, on the client thread. */
 final class SeasonalAir
@@ -47,7 +46,7 @@ final class SeasonalAir
         LocalPoint point = player == null ? null : player.getLocalLocation();
         DrawCallbacks renderer = client.getDrawCallbacks();
         if (client.getGameState() != GameState.LOGGED_IN || world == null || scene == null
-            || recolorer == null || (renderer != null && !(renderer instanceof GpuPlugin))
+            || recolorer == null || !SeasonalRenderer.supported(renderer)
             || !world.isTopLevel() || world.isInstance() || scene.isInstance()
             || world.getPlane() != 0 || world.getScene() != scene || point == null
             || point.getWorldView() != world.getId()

@@ -19,7 +19,6 @@ import net.runelite.api.SceneTilePaint;
 import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
 import net.runelite.api.hooks.DrawCallbacks;
-import net.runelite.client.plugins.gpu.GpuPlugin;
 
 /** Client-thread-only seasonal changes to existing scene colors. */
 public final class SeasonalSceneRecolorer
@@ -404,7 +403,7 @@ public final class SeasonalSceneRecolorer
     private void invalidate(Scene scene, BitSet dirty)
     {
         DrawCallbacks callbacks = client.getDrawCallbacks();
-        if (scene == null || scene != currentScene() || !(callbacks instanceof GpuPlugin)) { return; }
+        if (scene == null || scene != currentScene() || SeasonalRenderer.gpu(callbacks) == null) { return; }
         int width = zoneWidth(scene);
         if (width == 0) { return; }
         for (int bit = dirty.nextSetBit(0); bit >= 0; bit = dirty.nextSetBit(bit + 1))

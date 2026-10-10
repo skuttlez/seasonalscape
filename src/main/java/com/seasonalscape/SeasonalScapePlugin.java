@@ -20,7 +20,6 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.plugins.gpu.GpuPlugin;
 import net.runelite.client.ui.overlay.OverlayManager;
 
 @PluginDescriptor(name = "SeasonalScape", description = "Seasonal outdoor terrain, trees and ground cover",
@@ -192,7 +191,7 @@ public class SeasonalScapePlugin extends Plugin
         Scene scene = view.getScene();
         Season season = SeasonResolver.resolve(config.season(), config.hemisphere(), Clock.systemDefaultZone(), config.timeZone());
         DrawCallbacks renderer = client.getDrawCallbacks();
-        if (renderer != null && !(renderer instanceof GpuPlugin))
+        if (!SeasonalRenderer.supported(renderer))
         {
             groundCover.clear();
             SeasonalAir.clear(recolorer);

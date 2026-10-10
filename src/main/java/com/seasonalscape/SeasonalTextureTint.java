@@ -11,9 +11,8 @@ final class SeasonalTextureTint
 
     static boolean supported(Client client)
     {
-        if (!(client.getDrawCallbacks() instanceof GpuPlugin)) { return false; }
-        GpuPlugin gpu = (GpuPlugin) client.getDrawCallbacks();
-        return gpu.getInjector() != null
+        GpuPlugin gpu = SeasonalRenderer.gpu(client.getDrawCallbacks());
+        return gpu != null && gpu.getInjector() != null
             && gpu.getInjector().getInstance(GpuPluginConfig.class).brightTextures();
     }
 
