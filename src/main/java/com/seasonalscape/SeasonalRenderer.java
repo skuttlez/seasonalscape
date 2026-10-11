@@ -1,64 +1,73 @@
 package com.seasonalscape;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.util.Optional;
+import java.lang.ref.WeakReference;
+import net.runelite.api.Client;
 import net.runelite.api.hooks.DrawCallbacks;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.plugins.gpu.GpuPlugin;
 
-/** Recognizes supported renderers without replacing or bypassing another plugin's callbacks. */
+/** Client-thread-only compatibility checks using RuneLite's public plugin state. */
 final class SeasonalRenderer
 {
     private static final String RETRO_CALLBACKS = "com.retronpcswapper.RetroDrawCallbacks";
-    private static final int MAX_WRAPPERS = 8;
-    // ClassValue permits Plugin Hub classloaders to unload when a plugin is updated.
-    private static final ClassValue<Optional<Method>> DELEGATES = new ClassValue<Optional<Method>>()
-    {
-        @Override
-        protected Optional<Method> computeValue(Class<?> type)
-        {
-            if (!RETRO_CALLBACKS.equals(type.getName())) { return Optional.empty(); }
-            try
-            {
-                Method getter = type.getMethod("getDelegate");
-                return getter.getReturnType() == DrawCallbacks.class
-                    && !Modifier.isStatic(getter.getModifiers()) ? Optional.of(getter) : Optional.empty();
-            }
-            catch (ReflectiveOperationException | SecurityException ex)
-            {
-                return Optional.empty();
-            }
-        }
-    };
+    private static final String HD_PLUGIN = "rs117.hd.HdPlugin";
+    private final Client client;
+    private final PluginManager plugins;
+    private WeakReference<DrawCallbacks> observedWrapper = new WeakReference<>(null);
+    private GpuPlugin wrapperGpu;
 
-    private SeasonalRenderer() {}
-
-    static boolean supported(DrawCallbacks callbacks)
+    SeasonalRenderer(Client client, PluginManager plugins)
     {
-        return callbacks == null || gpu(callbacks) != null;
+        this.client = client;
+        this.plugins = plugins;
     }
 
-    static GpuPlugin gpu(DrawCallbacks callbacks)
+    boolean supported()
     {
-        for (int depth = 0; depth <= MAX_WRAPPERS; depth++)
+        // A missing callback while GPU mode is set is a renderer transition, not software.
+        return client.getDrawCallbacks() == null ? !client.isGpu() : gpu() != null;
+    }
+
+    GpuPlugin gpu()
+    {
+        DrawCallbacks callbacks = client.getDrawCallbacks();
+        if (callbacks instanceof GpuPlugin) { return (GpuPlugin) callbacks; }
+        if (callbacks == null || !RETRO_CALLBACKS.equals(callbacks.getClass().getName())) { return null; }
+
+        // Published Retro wraps only the built-in GPU or 117 HD's zone renderer.
+        // RuneLite makes those plugins mutually exclusive. Read the public registry;
+        // never inspect the wrapper's fields or invoke methods on another plugin.
+        GpuPlugin activeGpu = activeGpu();
+        if (callbacks != observedWrapper.get())
         {
-            if (callbacks instanceof GpuPlugin) { return (GpuPlugin) callbacks; }
-            if (callbacks == null || depth == MAX_WRAPPERS) { return null; }
-            Optional<Method> getter = DELEGATES.get(callbacks.getClass());
-            if (!getter.isPresent()) { return null; }
-            try
+            observedWrapper = new WeakReference<>(callbacks);
+            wrapperGpu = activeGpu;
+        }
+        else if (activeGpu != wrapperGpu)
+        {
+            // Never approve a previously rejected/stopped wrapper merely because GPU
+            // becomes active. Retro must install a fresh wrapper for the new renderer.
+            wrapperGpu = null;
+        }
+        return wrapperGpu;
+    }
+
+    private GpuPlugin activeGpu()
+    {
+        if (plugins == null || !client.isGpu()) { return null; }
+        GpuPlugin gpu = null;
+        for (Plugin plugin : plugins.getPlugins())
+        {
+            if (!(plugin instanceof GpuPlugin) && !HD_PLUGIN.equals(plugin.getClass().getName())) { continue; }
+            if (!plugins.isPluginActive(plugin)) { continue; }
+            if (HD_PLUGIN.equals(plugin.getClass().getName())) { return null; }
+            if (plugin instanceof GpuPlugin)
             {
-                // Retro is optional and loaded separately. Only its public getter is used;
-                // never access private fields or assume that its delegate is the GPU plugin.
-                Object delegate = getter.get().invoke(callbacks);
-                if (!(delegate instanceof DrawCallbacks) || delegate == callbacks) { return null; }
-                callbacks = (DrawCallbacks) delegate;
-            }
-            catch (ReflectiveOperationException | RuntimeException ex)
-            {
-                return null;
+                if (gpu != null) { return null; }
+                gpu = (GpuPlugin) plugin;
             }
         }
-        return null;
+        return gpu;
     }
 }

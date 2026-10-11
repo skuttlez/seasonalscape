@@ -130,29 +130,32 @@ public class WinterSnowfallTest
             f.tickAll(1);
             assertEquals("Raising the ceiling never makes snow spawn beneath roofs", 0, WinterSnowfall.getCount(f.owner));
             for (byte[] row : f.flags[2]) { java.util.Arrays.fill(row, (byte) 0); }
-            WinterSnowfall.update(f.owner, f.client, f.scene);
+            WinterSnowfall.update(f.owner, f.client, f.scene, f.renderer);
             assertEquals("Returning outdoors repopulates both layers", 384, WinterSnowfall.getCount(f.owner));
         }
         finally { WinterSnowfall.clear(f.owner); }
     }
 
     @Test
-    public void retroGpuKeepsSnowfallAndAnUnsupportedWrappedRendererClearsIt() throws Exception
+    public void retroGpuKeepsSnowfallAndStoppingGpuClearsIt() throws Exception
     {
         SnowFixture f = new SnowFixture();
         try
         {
             Set<Object> registered = Collections.newSetFromMap(new IdentityHashMap<>());
             registered.addAll(f.registered);
-            f.callbacks = new RetroDrawCallbacks(new GpuPlugin());
-            WinterSnowfall.update(f.owner, f.client, f.scene);
+            GpuPlugin gpu = new GpuPlugin();
+            f.plugins.add(gpu, true);
+            f.callbacks = new RetroDrawCallbacks(gpu);
+            f.gpuMode = true;
+            WinterSnowfall.update(f.owner, f.client, f.scene, f.renderer);
             assertEquals("The NPC wrapper retains the full snowfall volume", 384,
                 WinterSnowfall.getCount(f.owner));
             assertEquals("Compatible callbacks reuse the existing flakes", registered, f.registered);
 
-            f.callbacks = new RetroDrawCallbacks(proxy(DrawCallbacks.class, (name, args) -> null));
-            WinterSnowfall.update(f.owner, f.client, f.scene);
-            assertEquals("A wrapper must not hide an unsupported renderer", 0,
+            f.plugins.setActive(gpu, false);
+            WinterSnowfall.update(f.owner, f.client, f.scene, f.renderer);
+            assertEquals("An installed but stopped GPU must not keep wrapped snow enabled", 0,
                 WinterSnowfall.getCount(f.owner));
             assertTrue("Unsupported rendering unregisters every particle", f.registered.isEmpty());
             for (RuneLiteObject flake : f.flakes) { assertFalse(flake.isActive()); }
@@ -195,19 +198,20 @@ public class WinterSnowfallTest
             }
         });
         Object owner = new Object();
-        WinterSnowfall.update(owner, client, scene);
+        SeasonalRenderer renderer = new SeasonalRenderer(client, null);
+        WinterSnowfall.update(owner, client, scene, renderer);
         assertEquals("Kourend surface requests the normal snow models", 1, loads[0]);
         base[0] = 2600; base[1] = 3300;
-        WinterSnowfall.update(owner, client, scene);
+        WinterSnowfall.update(owner, client, scene, renderer);
         assertEquals("Western mainland also requests snowfall", 2, loads[0]);
         base[1] += 6400;
-        WinterSnowfall.update(owner, client, scene);
+        WinterSnowfall.update(owner, client, scene, renderer);
         assertEquals("Underground must not even load particle models", 2, loads[0]);
         base[1] = 6000;
-        WinterSnowfall.update(owner, client, scene);
+        WinterSnowfall.update(owner, client, scene, renderer);
         assertEquals("Separate maps stay outside supported coverage", 2, loads[0]);
         base[1] = 3300; instance[0] = true;
-        WinterSnowfall.update(owner, client, scene);
+        WinterSnowfall.update(owner, client, scene, renderer);
         assertEquals("Instance coordinates never bypass the scene guard", 2, loads[0]);
         assertEquals(0, WinterSnowfall.getCount(owner));
     }
@@ -281,11 +285,14 @@ public class WinterSnowfallTest
         final byte[][][] flags = new byte[4][32][32];
         final Set<Object> registered = Collections.newSetFromMap(new IdentityHashMap<>());
         final Client client;
+        final SeasonalPluginManagerTest plugins = new SeasonalPluginManagerTest();
+        final SeasonalRenderer renderer;
         final Scene scene;
         final List<RuneLiteObject> flakes;
         final Field altitude, upperLayer;
         int cycle = 1, cameraZ = -1800, cameraReads;
         DrawCallbacks callbacks;
+        boolean gpuMode;
 
         @SuppressWarnings("unchecked")
         SnowFixture() throws Exception
@@ -320,13 +327,16 @@ public class WinterSnowfallTest
                     case "getGameState": return GameState.LOGGED_IN;
                     case "getGameCycle": return cycle;
                     case "getDrawCallbacks": return callbacks;
+                    case "isGpu": return gpuMode;
                     case "getCameraZ": cameraReads++; return cameraZ;
+                    case "getCameraFpZ": cameraReads++; return (double) cameraZ;
                     case "registerRuneLiteObject": registered.add(args[0]); return null;
                     case "removeRuneLiteObject": registered.remove(args[0]); return null;
                     case "isRuneLiteObjectRegistered": return registered.contains(args[0]);
                     default: return null;
                 }
             });
+            renderer = new SeasonalRenderer(client, plugins.manager());
             Class<?> stateType = Class.forName("com.seasonalscape.WinterSnowfall$State");
             Constructor<?> constructor = stateType.getDeclaredConstructor(Client.class, WorldView.class, Scene.class, Model[].class);
             constructor.setAccessible(true);
@@ -341,7 +351,7 @@ public class WinterSnowfallTest
             Field states = WinterSnowfall.class.getDeclaredField("STATES");
             states.setAccessible(true);
             ((Map<Object, Object>) states.get(null)).put(owner, state);
-            WinterSnowfall.update(owner, client, scene);
+            WinterSnowfall.update(owner, client, scene, renderer);
         }
 
         void tickAll(int elapsed)

@@ -11,6 +11,7 @@ public class RetroDrawCallbacks implements DrawCallbacks
 {
     private DrawCallbacks delegate;
     public boolean failOnGetDelegate;
+    public int getterCalls;
     public int invalidatedZones;
 
     public RetroDrawCallbacks(DrawCallbacks delegate)
@@ -20,6 +21,7 @@ public class RetroDrawCallbacks implements DrawCallbacks
 
     public DrawCallbacks getDelegate()
     {
+        getterCalls++;
         if (failOnGetDelegate) { throw new IllegalStateException("Test getter failure"); }
         return delegate;
     }

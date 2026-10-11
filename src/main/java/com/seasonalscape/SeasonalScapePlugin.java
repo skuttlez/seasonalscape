@@ -20,6 +20,7 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.ui.overlay.OverlayManager;
 
 @PluginDescriptor(name = "SeasonalScape", description = "Seasonal outdoor terrain, trees and ground cover",
@@ -27,6 +28,7 @@ import net.runelite.client.ui.overlay.OverlayManager;
 public class SeasonalScapePlugin extends Plugin
 {
     @Inject private Client client;
+    @Inject private PluginManager pluginManager;
     @Inject private ClientThread clientThread;
     @Inject private AudioPlayer audioPlayer;
     @Inject private SeasonalScapeConfig config;
@@ -54,7 +56,7 @@ public class SeasonalScapePlugin extends Plugin
     {
         running = true;
         dirty = true;
-        recolorer = new SeasonalSceneRecolorer(client);
+        recolorer = new SeasonalSceneRecolorer(client, new SeasonalRenderer(client, pluginManager));
         groundCover = new GroundCover(client);
         overlayManager.add(overlay);
         SeasonalWinterAudio.start(this, client, getInjector().getInstance(ConfigManager.class), audioPlayer);
@@ -93,7 +95,7 @@ public class SeasonalScapePlugin extends Plugin
         if (running && activeSeason == Season.WINTER && recolorer != null)
         {
             WorldView world = client.getTopLevelWorldView();
-            WinterSnowfall.update(recolorer, client, world == null ? null : world.getScene());
+            WinterSnowfall.update(recolorer, client, world == null ? null : world.getScene(), recolorer.renderer());
             if (config.foliage()) { WinterTreeFrost.refresh(recolorer, client); }
         }
         else if (recolorer != null)
@@ -191,7 +193,7 @@ public class SeasonalScapePlugin extends Plugin
         Scene scene = view.getScene();
         Season season = SeasonResolver.resolve(config.season(), config.hemisphere(), Clock.systemDefaultZone(), config.timeZone());
         DrawCallbacks renderer = client.getDrawCallbacks();
-        if (!SeasonalRenderer.supported(renderer))
+        if (!recolorer.renderer().supported())
         {
             groundCover.clear();
             SeasonalAir.clear(recolorer);
@@ -220,7 +222,7 @@ public class SeasonalScapePlugin extends Plugin
         }
         SeasonalWinterAudio.update(this, season, running);
         WinterSurfaceSnow.update(recolorer, client, scene,
-            season == Season.WINTER && config.terrain() && config.winterStructureSnow());
+            season == Season.WINTER && config.terrain() && config.winterStructureSnow(), recolorer.renderer());
         groundCover.update(scene, recolorer, season, config.groundCover(), config.density());
         SeasonalAir.update(recolorer, client, scene, recolorer, season, config.seasonalAir(), config.density());
         int x = client.getLocalPlayer().getWorldLocation().getX();

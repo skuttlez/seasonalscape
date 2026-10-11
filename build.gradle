@@ -50,4 +50,5 @@ tasks.register('shadowJar', Jar) {
     exclude 'META-INF/INDEX.LIST', 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', '**/module-info.class'
     exclude '**/*Test.class', '**/*Test$*.class'
     exclude 'com/retronpcswapper/**'
+    exclude 'rs117/**'
 }

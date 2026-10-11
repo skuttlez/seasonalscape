@@ -44,13 +44,15 @@ public class SeasonalSceneRecolorerTest
         RecordingGpu gpu = new RecordingGpu();
         RetroDrawCallbacks retro = new RetroDrawCallbacks(gpu);
         f.callbacks = retro;
+        f.plugins.add(gpu, true);
+        f.gpuMode = true;
         int[] leaves = {GREEN, BROWN, -2};
         int[] originalLeaves = leaves.clone(), originalGround = f.paintColors.clone();
         f.objects = new GameObject[]{tree(treeModel(leaves, new short[]{-1, -1, -1}), 0)};
         long zone = gpu.track(f.offset >> 3, f.offset >> 3, leaves);
         try
         {
-            for (Season season : new Season[]{Season.AUTUMN, Season.SPRING, Season.SUMMER})
+            for (Season season : new Season[]{Season.AUTUMN, Season.WINTER, Season.SPRING, Season.SUMMER})
             {
                 int invalidations = retro.invalidatedZones;
                 f.apply(season, true, true);
@@ -75,11 +77,13 @@ public class SeasonalSceneRecolorerTest
     }
 
     @Test
-    public void retroReadsBrightTextureCapabilityFromItsGpuDelegate()
+    public void retroReadsBrightTextureCapabilityFromTheActiveRegisteredGpu()
     {
         Fixture f = new Fixture();
         RecordingGpu gpu = new RecordingGpu();
         f.callbacks = new RetroDrawCallbacks(gpu);
+        f.plugins.add(gpu, true);
+        f.gpuMode = true;
         int[] leaves = {30, 70, 115};
         int[] original = leaves.clone();
         short[] textures = {8, 30, 60};
@@ -92,7 +96,7 @@ public class SeasonalSceneRecolorerTest
             f.apply(Season.AUTUMN, false, true);
             for (int i = 0; i < leaves.length; i++)
             {
-                assertEquals("The underlying GPU capability enables packed leaf tints",
+                assertEquals("The active registered GPU capability enables packed leaf tints",
                     SeasonalTextureTint.foliage(original[i], textures[i], Season.AUTUMN), leaves[i]);
             }
             gpu.brightTextures = false;
@@ -109,6 +113,8 @@ public class SeasonalSceneRecolorerTest
         Fixture f = new Fixture();
         RecordingGpu gpu = new RecordingGpu();
         f.callbacks = gpu;
+        f.plugins.add(gpu, true);
+        f.gpuMode = true;
         f.player = proxy(Player.class, (name, args) -> name.equals("getWorldLocation")
             ? new WorldPoint(f.baseX, f.baseY, 0) : null);
         SeasonalScapePlugin plugin = new SeasonalScapePlugin();
@@ -143,11 +149,20 @@ public class SeasonalSceneRecolorerTest
             assertEquals(expected, f.paintColors[0]);
             assertTrue(retro.invalidatedZones > 0);
 
-            f.callbacks = new RetroDrawCallbacks(proxy(DrawCallbacks.class, (name, args) -> null));
+            f.plugins.setActive(gpu, false);
             plugin.onGameTick(new GameTick());
-            assertEquals("Unknown wrapped renderers remain unsupported", "Use default graphics or GPU",
+            assertEquals("Stopped GPU is rejected even while Retro's old callback remains", "Use default graphics or GPU",
                 plugin.getStatus());
             assertEquals("Rejecting a renderer restores original terrain", GREEN, f.paintColors[0]);
+
+            f.plugins.setActive(gpu, true);
+            plugin.onGameTick(new GameTick());
+            assertEquals("GPU startup cannot reapprove the stale wrapper", "Use default graphics or GPU",
+                plugin.getStatus());
+            f.callbacks = new RetroDrawCallbacks(gpu);
+            plugin.onGameTick(new GameTick());
+            assertEquals("A fresh Retro wrapper resumes seasonal effects", "Seasonal world active", plugin.getStatus());
+            assertEquals(expected, f.paintColors[0]);
         }
         finally { f.renderer.restore(); }
     }
@@ -655,6 +670,8 @@ public class SeasonalSceneRecolorerTest
         private GroundObject groundObject;
         private Player player;
         private DrawCallbacks callbacks;
+        private boolean gpuMode;
+        private final SeasonalPluginManagerTest plugins = new SeasonalPluginManagerTest();
         private final Client client;
         private final Tile tile;
         private final Scene scene;
@@ -705,11 +722,12 @@ public class SeasonalSceneRecolorerTest
                 if (name.equals("getTopLevelWorldView")) { return world; }
                 if (name.equals("getObjectDefinition")) { return definition; }
                 if (name.equals("getDrawCallbacks")) { return callbacks; }
+                if (name.equals("isGpu")) { return gpuMode; }
                 if (name.equals("getLocalPlayer")) { return player; }
                 if (name.equals("getGameState")) { return GameState.LOGGED_IN; }
                 return null;
             });
-            renderer = new SeasonalSceneRecolorer(client);
+            renderer = new SeasonalSceneRecolorer(client, new SeasonalRenderer(client, plugins.manager()));
         }
 
         private void apply(Season season, boolean terrain, boolean foliage)

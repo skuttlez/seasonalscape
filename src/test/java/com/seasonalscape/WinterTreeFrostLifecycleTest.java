@@ -30,10 +30,11 @@ import static org.junit.Assert.assertTrue;
 public class WinterTreeFrostLifecycleTest
 {
     @Test
-    public void retroGpuRetainsTreeSnowAndRejectsAnUnsupportedDelegate()
+    public void retroGpuRetainsTreeSnowAndStoppingGpuClearsQueuedAndActiveSnow()
     {
         Fixture f = new Fixture();
         GpuPlugin gpu = new GpuPlugin();
+        f.plugins.add(gpu, true);
         f.callbacks = gpu;
         try
         {
@@ -51,11 +52,9 @@ public class WinterTreeFrostLifecycleTest
             assertEquals(2, WinterTreeFrost.getCount(f.owner));
             int builds = f.lights, objects = f.objects.size();
 
-            retro.setDelegate(proxy(DrawCallbacks.class, (object, method, args) -> {
-                throw new AssertionError("Unknown renderer must never be called: " + method);
-            }));
+            f.plugins.setActive(gpu, false);
             f.nextTick();
-            assertEquals("Unsupported wrapped renderers clear existing snow", 0, f.activeCount());
+            assertEquals("Stopping the registered GPU clears existing wrapped snow", 0, f.activeCount());
             assertEquals(0, WinterTreeFrost.getCount(f.owner));
             f.nextTick();
             assertEquals("Rejected renderers cannot rebuild pending snow", builds, f.lights);
@@ -306,6 +305,7 @@ public class WinterTreeFrostLifecycleTest
         final Object owner = new Object();
         final int originX = 40 * 128 + 64, originY = 40 * 128 + 64;
         final List<Snow> objects = new ArrayList<>();
+        final SeasonalPluginManagerTest plugins = new SeasonalPluginManagerTest();
         LocalPoint point = new LocalPoint(originX, originY, WorldView.TOPLEVEL);
         int cycle = 100, plane, lights, nextId = 1, baseX = 3200, baseY = 3200;
         GameState gameState = GameState.LOGGED_IN;
@@ -344,6 +344,7 @@ public class WinterTreeFrostLifecycleTest
                 case "getBaseX": return baseX;
                 case "getBaseY": return baseY;
                 case "getDrawCallbacks": return callbacks;
+                case "isGpu": return callbacks != null;
                 case "loadModelData": return new Mesh(this).modelData();
                 case "mergeModels": return ((ModelData[]) args[0])[0];
                 case "createRuneLiteObject":
@@ -353,6 +354,7 @@ public class WinterTreeFrostLifecycleTest
                 default: throw new AssertionError(method);
             }
         });
+        final SeasonalRenderer renderer = new SeasonalRenderer(client, plugins.manager());
 
         Scene newScene()
         {
@@ -379,7 +381,7 @@ public class WinterTreeFrostLifecycleTest
             WinterTreeFrost.begin(owner);
             for (Tree tree : trees)
             {
-                assertTrue(WinterTreeFrost.update(owner, client, tree.object, tree.model));
+                assertTrue(WinterTreeFrost.update(owner, client, tree.object, tree.model, renderer));
             }
             WinterTreeFrost.end(owner);
         }

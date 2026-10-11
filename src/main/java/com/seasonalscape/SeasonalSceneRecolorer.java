@@ -24,6 +24,7 @@ import net.runelite.api.hooks.DrawCallbacks;
 public final class SeasonalSceneRecolorer
 {
     private final Client client;
+    private final SeasonalRenderer renderer;
     private final Map<SceneTilePaint, Colors> paints = new WeakHashMap<>();
     // Arrays have identity equality; weak keys release models evicted from the game cache.
     private final Map<int[], Colors> arrays = new WeakHashMap<>();
@@ -37,8 +38,16 @@ public final class SeasonalSceneRecolorer
 
     public SeasonalSceneRecolorer(Client client)
     {
-        this.client = client;
+        this(client, new SeasonalRenderer(client, null));
     }
+
+    SeasonalSceneRecolorer(Client client, SeasonalRenderer renderer)
+    {
+        this.client = client;
+        this.renderer = renderer;
+    }
+
+    SeasonalRenderer renderer() { return renderer; }
 
     public static boolean supports(Scene scene)
     {
@@ -49,7 +58,7 @@ public final class SeasonalSceneRecolorer
     {
         // Face tints preserve texture pixels and cutouts. Winter keeps textured
         // leaves unchanged; whitening them requires a supported material API.
-        boolean tintTextures = foliage && season != Season.WINTER && SeasonalTextureTint.supported(client);
+        boolean tintTextures = foliage && season != Season.WINTER && SeasonalTextureTint.supported(renderer);
         if (scene != activeScene.get() || season != previousSeason
             || terrain != previousTerrain || foliage != previousFoliage || tintTextures != previousTextureTint)
         {
@@ -238,7 +247,7 @@ public final class SeasonalSceneRecolorer
             "Yew", "Yew tree", "Maple tree")
             .contains(definition.getName())) { return false; }
         Model model = (Model) object.getRenderable();
-        if (season == Season.WINTER) { WinterTreeFrost.update(this, client, object, model); }
+        if (season == Season.WINTER) { WinterTreeFrost.update(this, client, object, model, renderer); }
         return recolorModel(model, season, true, tintTextures);
     }
 
@@ -403,7 +412,7 @@ public final class SeasonalSceneRecolorer
     private void invalidate(Scene scene, BitSet dirty)
     {
         DrawCallbacks callbacks = client.getDrawCallbacks();
-        if (scene == null || scene != currentScene() || SeasonalRenderer.gpu(callbacks) == null) { return; }
+        if (scene == null || scene != currentScene() || renderer.gpu() == null) { return; }
         int width = zoneWidth(scene);
         if (width == 0) { return; }
         for (int bit = dirty.nextSetBit(0); bit >= 0; bit = dirty.nextSetBit(bit + 1))

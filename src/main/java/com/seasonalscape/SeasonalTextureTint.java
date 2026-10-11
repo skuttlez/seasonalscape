@@ -1,6 +1,5 @@
 package com.seasonalscape;
 
-import net.runelite.api.Client;
 import net.runelite.client.plugins.gpu.GpuPlugin;
 import net.runelite.client.plugins.gpu.GpuPluginConfig;
 
@@ -9,9 +8,9 @@ final class SeasonalTextureTint
 {
     private SeasonalTextureTint() {}
 
-    static boolean supported(Client client)
+    static boolean supported(SeasonalRenderer renderer)
     {
-        GpuPlugin gpu = SeasonalRenderer.gpu(client.getDrawCallbacks());
+        GpuPlugin gpu = renderer.gpu();
         return gpu != null && gpu.getInjector() != null
             && gpu.getInjector().getInstance(GpuPluginConfig.class).brightTextures();
     }

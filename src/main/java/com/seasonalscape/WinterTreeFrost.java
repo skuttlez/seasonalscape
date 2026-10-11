@@ -42,7 +42,7 @@ final class WinterTreeFrost
     }
 
     /** Records the existing, already oriented tree mesh; creation is distance limited in refresh. */
-    static boolean update(Object owner, Client client, GameObject tree, Model model)
+    static boolean update(Object owner, Client client, GameObject tree, Model model, SeasonalRenderer renderer)
     {
         short[] textures = model.getFaceTextures();
         if (textures == null) { return false; }
@@ -67,6 +67,7 @@ final class WinterTreeFrost
             STATES.put(owner, state);
         }
         state.client = client;
+        state.renderer = renderer;
         Entry entry = state.entries.get(tree);
         if (entry == null || entry.model != model)
         {
@@ -175,7 +176,7 @@ final class WinterTreeFrost
             && point.getWorldView() == world.getId()
             && SeasonalWorldArea.contains(state.scene.getBaseX() + point.getSceneX(),
                 state.scene.getBaseY() + point.getSceneY())
-            && SeasonalRenderer.supported(client.getDrawCallbacks());
+            && state.renderer.supported();
     }
 
     static int getCount(Object owner)
@@ -405,6 +406,7 @@ final class WinterTreeFrost
         final List<Entry> selected = new ArrayList<>();
         final Map<Entry, Model> models = new LinkedHashMap<>(64, 0.75f, true);
         Client client;
+        SeasonalRenderer renderer;
         Scene scene;
         int baseX, baseY;
         int lastCycle = Integer.MIN_VALUE, lastBuilds;

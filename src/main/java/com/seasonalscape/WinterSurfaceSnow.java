@@ -47,7 +47,7 @@ final class WinterSurfaceSnow
     private WinterSurfaceSnow() {}
 
     /** Starts snow; subsequent client ticks continue a bounded amount of work. */
-    static void update(Object owner, Client client, Scene scene, boolean enabled)
+    static void update(Object owner, Client client, Scene scene, boolean enabled, SeasonalRenderer renderer)
     {
         if (!enabled) { restore(owner); return; }
         if (client.getGameState() == GameState.LOADING) { return; }
@@ -61,7 +61,7 @@ final class WinterSurfaceSnow
             restore(owner);
             Tile[][][] tiles = scene.getExtendedTiles();
             if (tiles == null || tiles.length == 0 || tiles[0] == null) { return; }
-            state = new State(client, scene);
+            state = new State(client, scene, renderer);
             STATES.put(owner, state);
         }
         tick(owner);
@@ -77,8 +77,7 @@ final class WinterSurfaceSnow
         {
             restore(owner); return;
         }
-        DrawCallbacks renderer = client.getDrawCallbacks();
-        if (!SeasonalRenderer.supported(renderer)) { restore(owner); return; }
+        if (!state.renderer.supported()) { restore(owner); return; }
         WorldView world = client.getTopLevelWorldView();
         if (world != null && world.getScene() != state.scene) { return; }
         int cycle = client.getGameCycle();
@@ -651,6 +650,7 @@ final class WinterSurfaceSnow
     private static final class State
     {
         final Client client;
+        final SeasonalRenderer renderer;
         final Scene scene;
         final Map<Tile, Roof> roofs = new IdentityHashMap<>();
         final Map<TileObject, List<Entry>> entries = new IdentityHashMap<>();
@@ -666,9 +666,10 @@ final class WinterSurfaceSnow
         long lastWorkNanos, maxWorkNanos;
         final int offset, width, size, baseX, baseY;
         int lastCycle = Integer.MIN_VALUE, nativeRoofs;
-        State(Client client, Scene scene)
+        State(Client client, Scene scene, SeasonalRenderer renderer)
         {
             this.client = client; this.scene = scene;
+            this.renderer = renderer;
             baseX = scene.getBaseX(); baseY = scene.getBaseY();
             size = scene.getExtendedTiles()[0].length;
             offset = (size - Constants.SCENE_SIZE) / 2;
@@ -682,7 +683,7 @@ final class WinterSurfaceSnow
         void invalidate(int budget)
         {
             DrawCallbacks callbacks = client.getDrawCallbacks();
-            if (SeasonalRenderer.gpu(callbacks) != null && client.getTopLevelWorldView() != null)
+            if (renderer.gpu() != null && client.getTopLevelWorldView() != null)
             {
                 Scene current = client.getTopLevelWorldView().getScene();
                 if (current == scene)

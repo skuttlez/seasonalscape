@@ -43,9 +43,10 @@ public class WinterSurfaceSnowTest
             throw new AssertionError("Disabled structure snow must not call Scene." + name);
         });
         Object owner = new Object();
+        SeasonalRenderer renderer = new SeasonalRenderer(client, null);
         for (int tick = 0; tick < 3; tick++)
         {
-            WinterSurfaceSnow.update(owner, client, scene, false);
+            WinterSurfaceSnow.update(owner, client, scene, false, renderer);
             assertEquals(0, WinterSurfaceSnow.getCount(owner));
         }
     }
@@ -110,11 +111,14 @@ public class WinterSurfaceSnowTest
         DrawCallbacks callbacks = wrapped ? wrapper : gpu;
         WorldView world = proxy(WorldView.class, (name, args) -> name.equals("getScene") ? currentScene : null);
         Client client = proxy(Client.class, (name, args) -> name.equals("getDrawCallbacks") ? callbacks
-            : name.equals("getTopLevelWorldView") ? world : null);
+            : name.equals("getTopLevelWorldView") ? world : name.equals("isGpu") ? true : null);
+        SeasonalPluginManagerTest plugins = new SeasonalPluginManagerTest();
+        plugins.add(gpu, true);
+        SeasonalRenderer renderer = new SeasonalRenderer(client, plugins.manager());
         Class<?> stateType = Class.forName("com.seasonalscape.WinterSurfaceSnow$State");
-        Constructor<?> constructor = stateType.getDeclaredConstructor(Client.class, Scene.class);
+        Constructor<?> constructor = stateType.getDeclaredConstructor(Client.class, Scene.class, SeasonalRenderer.class);
         constructor.setAccessible(true);
-        Object state = constructor.newInstance(client, oldScene);
+        Object state = constructor.newInstance(client, oldScene, renderer);
         Object owner = new Object();
         Field statesField = WinterSurfaceSnow.class.getDeclaredField("STATES");
         statesField.setAccessible(true);
@@ -140,7 +144,7 @@ public class WinterSurfaceSnowTest
         try
         {
             assertEquals(3, WinterRoofMaterial.apply(state, roof));
-            WinterSurfaceSnow.update(owner, client, oldScene, false);
+            WinterSurfaceSnow.update(owner, client, oldScene, false, renderer);
             assertEquals(0, WinterSurfaceSnow.getCount(owner));
             assertArrayEquals(new int[]{100}, colors);
             assertArrayEquals(new short[]{45}, textures);
@@ -361,21 +365,26 @@ public class WinterSurfaceSnowTest
         WorldView world = proxy(WorldView.class, (name, args) -> name.equals("getScene") ? scene : null);
         Client client = proxy(Client.class, (name, args) -> {
             assertTrue("Disabling structure snow only needs GPU cleanup, not Client." + name,
-                allowScans[0] || name.equals("getDrawCallbacks") || name.equals("getTopLevelWorldView"));
+                allowScans[0] || name.equals("getDrawCallbacks") || name.equals("getTopLevelWorldView")
+                    || name.equals("isGpu"));
             switch (name)
             {
                 case "getGameState": return GameState.LOGGED_IN;
                 case "getLocalPlayer": return player;
                 case "getGameCycle": return cycle[0];
                 case "getDrawCallbacks": return callbacks;
+                case "isGpu": return true;
                 case "getTopLevelWorldView": return world;
                 default: return null;
             }
         });
         Object owner = new Object();
+        SeasonalPluginManagerTest plugins = new SeasonalPluginManagerTest();
+        plugins.add(gpu, true);
+        SeasonalRenderer renderer = new SeasonalRenderer(client, plugins.manager());
         try
         {
-            WinterSurfaceSnow.update(owner, client, scene, true);
+            WinterSurfaceSnow.update(owner, client, scene, true, renderer);
             for (int step = 0; step < 500 && stateField(owner, "scan") != null; step++)
             {
                 assertTrue("Tile discovery has a strict per-cycle cap", (int) stateField(owner, "lastTiles") <= 192);
@@ -405,7 +414,7 @@ public class WinterSurfaceSnowTest
                 gpu.zones.contains((long) ((positions[0][0] + offset) >> 3) << 32
                     | ((positions[0][1] + offset) >> 3) & 0xffffffffL));
             allowScans[0] = false;
-            WinterSurfaceSnow.update(owner, client, scene, false);
+            WinterSurfaceSnow.update(owner, client, scene, false, renderer);
             assertEquals(0, WinterSurfaceSnow.getCount(owner));
             if (wrapped)
             {
@@ -423,7 +432,7 @@ public class WinterSurfaceSnowTest
             });
             for (int tick = 0; tick < 3; tick++)
             {
-                WinterSurfaceSnow.update(owner, idleClient, scene, false);
+                WinterSurfaceSnow.update(owner, idleClient, scene, false, renderer);
                 assertEquals(0, WinterSurfaceSnow.getCount(owner));
             }
         }
@@ -482,9 +491,10 @@ public class WinterSurfaceSnowTest
             }
         });
         Object owner = new Object();
+        SeasonalRenderer renderer = new SeasonalRenderer(client, null);
         try
         {
-            WinterSurfaceSnow.update(owner, client, scene, true);
+            WinterSurfaceSnow.update(owner, client, scene, true, renderer);
             for (int step = 0; step < 500 && stateField(owner, "scan") != null; step++)
             {
                 assertTrue("At most two models are processed in any one client cycle",

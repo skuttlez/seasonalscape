@@ -16,7 +16,6 @@ import net.runelite.api.Scene;
 import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
-import net.runelite.api.hooks.DrawCallbacks;
 
 /** Small depth-tested flakes. All state and animation run on the client thread. */
 final class WinterSnowfall
@@ -33,14 +32,13 @@ final class WinterSnowfall
     private WinterSnowfall() {}
 
     /** The caller enables this only during winter. */
-    static void update(Object owner, Client client, Scene scene)
+    static void update(Object owner, Client client, Scene scene, SeasonalRenderer renderer)
     {
         WorldView world = client.getTopLevelWorldView();
         Player player = client.getLocalPlayer();
         LocalPoint point = player == null ? null : player.getLocalLocation();
-        DrawCallbacks renderer = client.getDrawCallbacks();
         if (client.getGameState() != GameState.LOGGED_IN || world == null || scene == null
-            || !SeasonalRenderer.supported(renderer)
+            || !renderer.supported()
             || !world.isTopLevel() || world.isInstance() || scene.isInstance()
             || world.getPlane() != 0 || world.getScene() != scene || point == null
             || point.getWorldView() != world.getId()
